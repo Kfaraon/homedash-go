@@ -1,0 +1,54 @@
+{
+  "groups": [
+    {
+      "name": "Виртуализация",
+      "services": [
+        {
+          "name": "Proxmox",
+          "url": "https://192.168.1.10:8006",
+          "ip": "192.168.1.10",
+          "icon": "mdi:server",
+          "category": "Proxmox",
+          "verify_ssl": false
+        }
+      ]
+    },
+    {
+      "name": "Сеть и DNS",
+      "services": [
+        {
+          "name": "AdGuard",
+          "url": "http://192.168.1.11:3000",
+          "ip": "192.168.1.11",
+          "icon": "mdi:shield",
+          "category": "AdGuard"
+        },
+        {
+          "name": "Роутер",
+          "ip": "192.168.1.1",
+          "icon": "mdi:router",
+          "category": "Router"
+        },
+        {
+          "name": "Google DNS",
+          "url": "https://google.com",
+          "ip": "8.8.8.8",
+          "icon": "mdi:router",
+          "category": "Router"
+        }
+      ]
+    },
+    {
+      "name": "Умный дом",
+      "services": [
+        {
+          "name": "Home Assistant",
+          "url": "http://192.168.1.12:8123",
+          "ip": "192.168.1.12",
+          "icon": "mdi:home-assistant",
+          "category": "HASS"
+        }
+      ]
+    }
+  ]
+}
