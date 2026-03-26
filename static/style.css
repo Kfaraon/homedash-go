@@ -1,0 +1,350 @@
+:root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-card: #ffffff;
+    --bg-card-header: #f6f8fa;
+    --text-primary: #1f2328;
+    --text-secondary: #59636e;
+    --text-muted: #6e7781;
+    --border-color: #d0d7de;
+    --border-light: #eaeef2;
+    --accent-color: #0969da;
+
+    --success-bg: #dafbe1;
+    --success-text: #1a7f37;
+    --success-border: #b7e1c0;
+    --danger-bg: #ffebe9;
+    --danger-text: #d1242f;
+    --danger-border: #fcc2c0;
+
+    --button-bg: #f6f8fa;
+    --button-border: #d0d7de;
+    --button-hover-bg: #f3f4f6;
+    --footer-border: #d0d7de;
+    --shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
+}
+
+body.dark-theme {
+    --bg-primary: #0d1117;
+    --bg-secondary: #151b23;
+    --bg-card: #151b23;
+    --bg-card-header: #1f242b;
+    --text-primary: #f0f6fc;
+    --text-secondary: #9198a1;
+    --text-muted: #8b949e;
+    --border-color: #3d444d;
+    --border-light: #2d333b;
+    --accent-color: #4493f8;
+
+    --success-bg: #1a472a;
+    --success-text: #7ee3a8;
+    --success-border: #2d5a3d;
+    --danger-bg: #571c1c;
+    --danger-text: #ffa198;
+    --danger-border: #792e2e;
+
+    --button-bg: #212830;
+    --button-border: #3d444d;
+    --button-hover-bg: #2d333b;
+    --footer-border: #3d444d;
+    --shadow: 0 1px 0 rgba(1, 4, 9, 0.4);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: var(--bg-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    color: var(--text-primary);
+    line-height: 1.5;
+    padding: 2rem;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    transition: background-color 0.1s, color 0.1s;
+}
+
+.container {
+    max-width: 1280px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* === Шапка === */
+.header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.repo-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.repo-name {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.repo-name h1 {
+    font-size: 1.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.2;
+}
+
+.repo-badge {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 2rem;
+    padding: 0.2rem 0.8rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.theme-toggle {
+    background-color: var(--button-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.4rem 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-primary);
+    box-shadow: var(--shadow);
+    transition: 0.1s;
+    flex-shrink: 0;
+}
+
+.theme-toggle:hover {
+    background-color: var(--button-hover-bg);
+}
+
+.theme-toggle iconify-icon {
+    color: var(--text-primary);
+}
+
+/* === Сетка карточек === */
+.services-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+}
+
+.service-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    overflow: hidden;
+    transition: 0.1s;
+    cursor: pointer;
+}
+
+.service-card:hover {
+    border-color: var(--accent-color);
+}
+
+.service-card[data-url="#"] {
+    cursor: default;
+    opacity: 0.9;
+}
+
+.service-card[data-url="#"]:hover {
+    border-color: var(--border-color);
+}
+
+.card-header {
+    background-color: var(--bg-secondary);
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.card-header iconify-icon {
+    color: var(--text-primary);
+    flex-shrink: 0;
+}
+
+.service-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 1rem;
+    margin-right: auto;
+    word-break: break-word;
+}
+
+/* Индикаторы статусов в заголовке */
+.status-icons {
+    display: flex;
+    gap: 0.3rem;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.status-icon {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.status-icon.check-ok {
+    color: var(--success-text);
+}
+
+.status-icon.check-fail {
+    color: var(--danger-text);
+}
+
+.status-icon.check-unknown {
+    color: var(--text-muted);
+    opacity: 0.5;
+}
+
+.card-body {
+    padding: 1rem;
+    background-color: var(--bg-card);
+}
+
+.service-category {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-family: 'SF Mono', 'Monaco', monospace;
+    word-break: break-word;
+}
+
+/* === Группы === */
+.group-section {
+    margin-bottom: 2.5rem;
+}
+
+.group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.group-header h2 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+/* === Футер === */
+.footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+/* ========== АДАПТАЦИЯ ДЛЯ ПЛАНШЕТОВ И МОБИЛЬНЫХ ========== */
+
+/* Планшеты (от 601px до 900px) */
+@media (min-width: 601px) and (max-width: 900px) {
+    .services-grid {
+        grid-template-columns: repeat(2, 1fr); /* две колонки */
+    }
+}
+
+/* Мобильные устройства (до 600px) */
+@media (max-width: 600px) {
+    body {
+        padding: 1rem;
+    }
+
+    .header-row {
+        margin-bottom: 1.5rem;
+    }
+
+    .repo-name h1 {
+        font-size: 1.5rem;
+    }
+
+    .theme-toggle {
+        padding: 0.3rem 0.6rem;
+    }
+
+    .services-grid {
+        grid-template-columns: 1fr; /* одна колонка */
+        gap: 0.5rem;
+    }
+
+    .card-header {
+        padding: 0.5rem 0.8rem;
+    }
+
+    .card-body {
+        padding: 0.8rem;
+    }
+
+    .service-name {
+        font-size: 0.95rem;
+    }
+
+    .status-icons iconify-icon {
+        width: 16px;
+        height: 16px;
+    }
+
+    .service-category {
+        font-size: 0.75rem;
+    }
+
+    .group-header h2 {
+        font-size: 1rem;
+    }
+
+    .footer {
+        font-size: 0.7rem;
+        padding-top: 1rem;
+        margin-top: 1.5rem;
+    }
+}
+
+/* Очень маленькие экраны (до 400px) */
+@media (max-width: 400px) {
+    .repo-name {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.2rem;
+    }
+
+    .repo-badge {
+        font-size: 0.7rem;
+    }
+
+    .card-header {
+        flex-wrap: wrap;
+        gap: 0.3rem;
+    }
+
+    .service-name {
+        width: 100%;
+        margin-right: 0;
+    }
+
+    .status-icons {
+        margin-left: auto;
+    }
+}

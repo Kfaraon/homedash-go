@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>homedash · сервисы</title>
+    <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2.3.0/dist/iconify-icon.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header-row">
+            <div class="repo-info">
+                <div class="repo-name">
+                    <h1>homedash/services</h1>
+                    <span class="repo-badge">public</span>
+                </div>
+            </div>
+            <div class="theme-toggle" id="themeToggle">
+                <iconify-icon id="themeIcon" icon="material-symbols:dark-mode-outline" width="20" height="20"></iconify-icon>
+            </div>
+        </div>
+
+        {% for group in groups %}
+        <div class="group-section">
+            <div class="group-header">
+                <h2>{{ group.name }}</h2>
+            </div>
+            <div class="services-grid">
+                {% for service in group.services %}
+                <div class="service-card" data-service-name="{{ service.name }}" data-url="{{ service.url }}">
+                    <div class="card-header">
+                        <iconify-icon icon="{{ service.icon }}" width="24" height="24"></iconify-icon>
+                        <span class="service-name">{{ service.name }}</span>
+                        <!-- Индикаторы статусов (иконки без текста) с подсказками адресов -->
+                        <div class="status-icons">
+                            {% if service.url %}
+                            <iconify-icon
+                                icon="mdi:web"
+                                width="18"
+                                height="18"
+                                class="status-icon check-unknown"
+                                data-check-type="http"
+                                title="{{ service.url }}"
+                            ></iconify-icon>
+                            {% endif %}
+                            {% if service.ip %}
+                            <iconify-icon
+                                icon="mdi:network"
+                                width="18"
+                                height="18"
+                                class="status-icon check-unknown"
+                                data-check-type="ping"
+                                title="{{ service.ip }}"
+                            ></iconify-icon>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="service-category">{{ service.category | lower }}.yaml</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+
+        <div class="footer">
+            <span>© homedash · auto-update every 5s</span>
+        </div>
+    </div>
+
+    <script>
+        const themeToggle = document.getElementById('themeToggle');
+        const themeIcon = document.getElementById('themeIcon');
+        const body = document.body;
+
+        function updateThemeIcon() {
+            if (body.classList.contains('dark-theme')) {
+                themeIcon.setAttribute('icon', 'material-symbols:light-mode-outline');
+            } else {
+                themeIcon.setAttribute('icon', 'material-symbols:dark-mode-outline');
+            }
+        }
+
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'dark') {
+            body.classList.add('dark-theme');
+            updateThemeIcon();
+        }
+
+        themeToggle.addEventListener('click', () => {
+            body.classList.toggle('dark-theme');
+            localStorage.setItem('theme', body.classList.contains('dark-theme') ? 'dark' : 'light');
+            updateThemeIcon();
+        });
+
+        // Кликабельность карточек
+        document.querySelectorAll('.service-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                const url = card.dataset.url;
+                if (url && url !== '#') {
+                    window.open(url, '_blank');
+                }
+            });
+        });
+
+        // Функция обновления статусов
+        async function fetchStatuses() {
+            try {
+                const response = await fetch('/api/status');
+                if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+                const data = await response.json();
+
+                data.services.forEach(service => {
+                    const card = document.querySelector(`.service-card[data-service-name="${service.name}"]`);
+                    if (!card) return;
+
+                    // Находим все иконки статусов в этой карточке
+                    const icons = card.querySelectorAll('.status-icons iconify-icon');
+                    icons.forEach(icon => {
+                        const checkType = icon.getAttribute('data-check-type'); // 'http' или 'ping'
+                        if (!checkType) return;
+
+                        const status = service[checkType]; // true, false или null
+                        icon.classList.remove('check-ok', 'check-fail', 'check-unknown');
+                        if (status === true) {
+                            icon.classList.add('check-ok');
+                        } else if (status === false) {
+                            icon.classList.add('check-fail');
+                        } else {
+                            icon.classList.add('check-unknown');
+                        }
+                    });
+                });
+            } catch (error) {
+                console.error('Ошибка при обновлении статусов:', error);
+            }
+        }
+
+        // Первый вызов сразу после загрузки страницы
+        fetchStatuses();
+        // Повторяем каждые 5 секунд
+        setInterval(fetchStatuses, 5000);
+    </script>
+</body>
+</html>
