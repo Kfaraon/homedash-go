@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  homedash:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      # монтируем конфиг с хоста (можно указать абсолютный путь)
+      - ./config.json:/app/config.json
+    restart: unless-stopped
