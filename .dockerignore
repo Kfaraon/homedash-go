@@ -1,9 +1,46 @@
+# VCS
 .git
 .gitignore
-__pycache__
-*.pyc
-.venv
-venv
-.env
-.dockerignore
+.gitattributes
+.github
+
+# Временные файлы Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.log
+*.pid
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+
+# Папки сборки
+bin/
+dist/
+tmp/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Документация (опционально)
 README.md
+docs/
+
+# Конфиг для разработки – при необходимости исключить (если он будет монтироваться извне)
+# config.json
+
+# Отладочные файлы
+debug
+coverage.out
