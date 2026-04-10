@@ -1,49 +1,95 @@
 {
   "groups": [
     {
-      "name": "Виртуализация",
+      "name": "Внешние сервисы",
       "services": [
         {
-          "name": "Proxmox",
-          "url": "https://127.0.0.1:8006",
-          "ip": "127.0.0.1",
-          "verify_ssl": false
+          "name": "Google",
+          "url": "https://google.com"
+        },
+        {
+          "name": "GitHub",
+          "url": "https://github.com"
+        },
+        {
+          "name": "Cloudflare",
+          "url": "https://cloudflare.com"
+        },
+        {
+          "name": "YouTube",
+          "url": "https://youtube.com"
+        },
+        {
+          "name": "Telegram",
+          "url": "https://telegram.org"
+        },
+        {
+          "name": "Notion",
+          "url": "https://notion.so"
+        },
+        {
+          "name": "Discord",
+          "url": "https://discord.com"
+        },
+        {
+          "name": "Spotify",
+          "url": "https://spotify.com"
+        },
+        {
+          "name": "Netflix",
+          "url": "https://netflix.com"
+        },
+        {
+          "name": "Steam",
+          "url": "https://steampowered.com"
         }
       ]
     },
     {
-      "name": "Сеть и DNS",
+      "name": "Внутренние сервисы",
       "services": [
         {
-          "name": "AdGuard",
+          "name": "Nginx",
+          "url": "http://127.0.0.1:80",
+          "ip": "127.0.0.1"
+        },
+        {
+          "name": "PostgreSQL",
+          "ip": "127.0.0.1"
+        },
+        {
+          "name": "Grafana",
           "url": "http://127.0.0.1:3000",
           "ip": "127.0.0.1"
         },
         {
-          "name": "Роутер",
+          "name": "Docker",
+          "url": "http://127.0.0.1:2375",
           "ip": "127.0.0.1"
         },
         {
-          "name": "Google DNS",
-          "url": "https://google.com",
-          "ip": "8.8.8.8"
+          "name": "Nextcloud",
+          "url": "http://127.0.0.1:8080",
+          "ip": "127.0.0.1"
         },
         {
-          "name": "1.1.1.1 DNS",
-          "ip": "1.1.1.1"
+          "name": "Portainer",
+          "url": "http://127.0.0.1:9000",
+          "ip": "127.0.0.1"
         },
         {
-          "name": "1.0.0.1 DNS",
-          "ip": "1.0.0.1"
-        }
-      ]
-    },
-    {
-      "name": "Умный дом",
-      "services": [
+          "name": "Prometheus",
+          "url": "http://127.0.0.1:9090",
+          "ip": "127.0.0.1"
+        },
         {
           "name": "Home Assistant",
           "url": "http://127.0.0.1:8123",
+          "ip": "127.0.0.1"
+        },
+        {
+          "name": "AdGuard",
+          "url": "http://127.0.0.1:3000",
           "ip": "127.0.0.1"
         }
       ]
