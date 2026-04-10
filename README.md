@@ -1,17 +1,15 @@
 # homedash-go 🖥️
 
-**Homedash** — легковесный дашборд для мониторинга домашних сервисов. Автоматически подбирает цветные иконки с Iconify, проверяет доступность через HTTP и Ping, оформлен в стиле Qwen Code.
-
-<img width="1208" height="897" alt="изображение" src="https://github.com/user-attachments/assets/56494b59-6dd9-4cdd-8417-02ce56d2ef62" />
-
+**Homedash** — легковесный дашборд для мониторинга домашних сервисов. Автоматически подбирает цветные иконки с Iconify, проверяет доступность через HTTP и Ping, поддерживает горячую перезагрузку конфигурации без перезапуска.
 
 ## ✨ Возможности
 
 - 🎨 **Автоподбор иконок** — цветные SVG с Iconify CDN по имени сервиса (100+ сервисов)
-- 🟢 **Мониторинг в реальном времени** — HTTP + Ping проверка каждые 5 секунд с динамическим бейджем статуса
+- 🟢 **Мониторинг в реальном времени** — HTTP + Ping проверка с кешированием и динамическим бейджем статуса
+- 🔄 **Hot-reload конфигурации** — изменение `config.json` подхватывается автоматически без перезапуска
 - 🌓 **Тёмная и светлая тема** — плавное переключение с сохранением в `localStorage`
-- 🔤 **Шрифты Qwen Code** — Inter для UI, JetBrains Mono для технических элементов
-- 🐳 **D-ready образ** — multi-stage сборка, health check, непривилегированный пользователь
+- 🔤 **Шрифты** — Inter для UI, JetBrains Mono для технических элементов
+- 🐳 **Docker-ready** — multi-stage сборка, health check, непривилегированный пользователь
 - ⚡ **Graceful shutdown** — корректное завершение по SIGINT/SIGTERM
 - 🔧 **Гибкая настройка** — порт, таймауты через переменные окружения
 - ✅ **Валидация конфига** — проверка имён, URL/IP, дубликатов при запуске
@@ -40,14 +38,19 @@ docker compose up -d
 {
   "groups": [
     {
-      "name": "Виртуализация",
+      "name": "Внешние сервисы",
       "services": [
-        {
-          "name": "Proxmox",
-          "url": "https://192.168.1.10:8006",
-          "ip": "192.168.1.10",
-          "verify_ssl": false
-        }
+        { "name": "Google",    "url": "https://google.com" },
+        { "name": "GitHub",    "url": "https://github.com" },
+        { "name": "Cloudflare","url": "https://cloudflare.com" }
+      ]
+    },
+    {
+      "name": "Внутренние сервисы",
+      "services": [
+        { "name": "Nginx",  "url": "http://127.0.0.1:80",  "ip": "127.0.0.1" },
+        { "name": "Redis",  "ip": "127.0.0.1" },
+        { "name": "Grafana","url": "http://127.0.0.1:3000","ip": "127.0.0.1" }
       ]
     }
   ]
@@ -70,6 +73,7 @@ docker compose up -d
 | `name` | string | ✅ | Имя сервиса (по нему подбирается иконка) |
 | `url` | string | ❌ | HTTP URL для проверки (минимум одно из `url`/`ip`) |
 | `ip` | string | ❌ | IP-адрес для ping проверки |
+| `icon` | string | ❌ | Явная иконка `prefix:name` (переопределяет автоподбор) |
 | `verify_ssl` | bool | ❌ | Проверять SSL-сертификат (по умолчанию `false`) |
 
 ### Переменные окружения
@@ -86,13 +90,25 @@ docker compose up -d
 PORT=8080 CHECK_TIMEOUT=5s ./homedash
 ```
 
+### Горячая перезагрузка
+
+Просто отредактируйте `config.json` — изменения подхватятся автоматически. В логах появится сообщение:
+
+```
+Watching config.json for changes...
+Обнаружено изменение config.json, перезагрузка...
+Конфиг перезагружен: 2 групп, 20 сервисов
+```
+
+Кэш статусов сбрасывается, следующие запрос к `/api/status` выполнит свежие проверки.
+
 ## 📁 Структура проекта
 
 ```
 homedash-go/
-├── main.go              # Сервер, роутинг, проверки, иконки
+├── main.go              # Сервер, роутинг, проверки, иконки, hot-reload
 ├── config.json          # Конфигурация сервисов
-├── go.mod               # Go-модуль
+├── go.mod / go.sum      # Go-модуль (fsnotify)
 ├── dockerfile           # Multi-stage Docker образ
 ├── docker-compose.yml   # Docker Compose
 ├── .dockerignore        # Исключения для Docker
@@ -100,7 +116,7 @@ homedash-go/
 ├── templates/
 │   └── home.html        # HTML-шаблон (Go template)
 └── static/
-    └── style.css        # CSS-стили (Qwen Code theme)
+    └── style.css        # CSS-стили
 ```
 
 ## 🎨 Поддерживаемые иконки
@@ -123,25 +139,25 @@ homedash-go/
 | **Коммуникации** | Telegram, Discord, Slack, Mattermost, Matrix, Zulip |
 | **Прочее** | Firefox, Chrome, VS Code, Notion, Obsidian, Spotify, YouTube, Steam |
 
-Если иконка не найдена — генерируется SVG-заглушка с ⚡ на фирменном фоне.
+Если иконка не найдена — генерируется SVG-заглушка с первой буквой имени на фирменном фоне.
 
 ## 🔌 API
 
 ### `GET /api/status`
 
-Возвращает статусы всех сервисов:
+Возвращает статусы всех сервисов (кешируется на 3 секунды):
 
 ```json
 {
   "services": {
-    "Proxmox": {
+    "Google": {
       "available": true,
       "http": true,
-      "ping": true
+      "ping": null
     },
-    "Роутер": {
-      "available": true,
-      "http": null,
+    "Nginx": {
+      "available": false,
+      "http": false,
       "ping": true
     }
   },
@@ -165,6 +181,7 @@ Health check endpoint (для Docker и оркестраторов):
 | Слой | Технология |
 |------|-----------|
 | **Backend** | Go 1.21 (net/http, html/template) |
+| **File watch** | fsnotify (hot-reload конфига) |
 | **Иконки** | Iconify CDN (Simple Icons + MDI) |
 | **Frontend** | HTML + CSS + vanilla JS (без фреймворков) |
 | **Шрифты** | Inter 400–700, JetBrains Mono 400–600 |
