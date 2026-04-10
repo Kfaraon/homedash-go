@@ -2,10 +2,30 @@ version: '3.8'
 
 services:
   homedash:
-    build: .
+    build:
+      context: .
+      dockerfile: dockerfile
+    container_name: homedash
     ports:
       - "5000:5000"
     volumes:
-      # монтируем конфиг с хоста (можно указать абсолютный путь)
-      - ./config.json:/app/config.json
+      # Монтируем конфиг с хоста (можно редактировать без пересборки)
+      - ./config.json:/app/config.json:ro
+    environment:
+      - PORT=5000
+      - CHECK_TIMEOUT=2s
+      - PING_TIMEOUT=1s
+      - TZ=Europe/Moscow
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - homedash-net
+
+networks:
+  homedash-net:
+    driver: bridge
