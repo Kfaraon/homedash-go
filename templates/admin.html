@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Homedash Admin — управление сервисами">
+    <meta name="color-scheme" content="light dark">
+    <title>homedash · admin</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%236c5ce7'/><text x='16' y='22' text-anchor='middle' font-size='18' font-family='system-ui' fill='white'>A</text></svg>">
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+    html.dark-theme{--bg-primary:#0f0f0f;--bg-secondary:#1a1a1a;--bg-surface:#1a1a1a;--bg-elevated:#242424;--text-primary:#e5e5e5;--text-secondary:#a3a3a3;--text-muted:#666;--border-color:#2a2a2a;--border-hover:#404040;--accent:#8b7cf7;--accent-hover:#a78bfa;--accent-light:rgba(139,124,247,0.12);--success:#34d399;--success-bg:rgba(52,211,153,0.12);--danger:#f87171;--danger-bg:rgba(248,113,113,0.12);--shadow-sm:0 1px 2px rgba(0,0,0,0.2);--shadow-md:0 4px 12px rgba(0,0,0,0.3);--shadow-lg:0 8px 24px rgba(0,0,0,0.4)}
+    </style>
+    <script>
+    if(localStorage.getItem('theme')==='dark')document.documentElement.classList.add('dark-theme');
+    </script>
+    <style>
+        /* ==========================================================================
+           Admin-specific styles
+           ========================================================================== */
+
+        /* Admin header */
+        .admin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .admin-header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: var(--text-primary);
+            line-height: 1.3;
+        }
+
+        .admin-header h1 span {
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        .admin-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: color var(--transition);
+            font-size: 0.9rem;
+        }
+
+        .back-link:hover {
+            color: var(--accent);
+        }
+
+        /* Add group section */
+        .add-group-section {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .add-group-section h3 {
+            margin-bottom: 1rem;
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+
+        /* Forms */
+        .form-row {
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .form-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.35rem;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            font-size: 0.9rem;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            transition: border-color var(--transition), box-shadow var(--transition);
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-light);
+        }
+
+        .form-group input::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* Checkbox */
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            cursor: pointer;
+            margin-bottom: 0;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.6rem 1.25rem;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--transition);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.35rem;
+            white-space: nowrap;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--text-inverse);
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #2f855a;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c53030;
+        }
+
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        .btn-ghost:hover {
+            background: var(--bg-elevated);
+            border-color: var(--border-hover);
+            color: var(--text-primary);
+        }
+
+        /* Add Group Button (styled as group header) */
+        .add-group-section-btn {
+            cursor: pointer;
+            transition: box-shadow var(--transition);
+        }
+
+        .add-group-section-btn:hover {
+            box-shadow: var(--shadow-md);
+        }
+
+        .add-group-section-btn h2 {
+            opacity: 0.6;
+            transition: opacity var(--transition);
+        }
+
+        .add-group-section-btn:hover h2 {
+            opacity: 1;
+        }
+
+        /* Group section */
+        .group-section {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 2rem;
+            overflow: hidden;
+            transition: border-color var(--transition), box-shadow var(--transition);
+        }
+
+        .group-section:hover {
+            box-shadow: var(--shadow-md);
+        }
+
+        .group-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1.25rem;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--accent-light);
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .group-title-row {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .group-title-row h2 {
+            margin: 0;
+        }
+
+        /* Add service row */
+        .add-service-row {
+            cursor: pointer;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            transition: all var(--transition);
+        }
+
+        .add-service-row td {
+            padding: 0.75rem 1rem;
+        }
+
+        .add-service-row:hover {
+            background: var(--accent-light) !important;
+            color: var(--accent);
+        }
+
+        .add-service-row svg {
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        .group-header h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--accent);
+            letter-spacing: -0.01em;
+            font-family:
+                'JetBrains Mono',
+                'Fira Code',
+                'SF Mono',
+                Consolas,
+                monospace;
+            -webkit-font-smoothing: auto;
+        }
+
+        .group-header h2::before {
+            content: '';
+            display: inline-block;
+            width: 3px;
+            height: 1em;
+            background: var(--accent);
+            border-radius: 2px;
+            margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+
+        /* Services table */
+        .services-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .services-table th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            background: var(--bg-primary);
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-color);
+            font-family:
+                'JetBrains Mono',
+                'Fira Code',
+                'SF Mono',
+                Consolas,
+                monospace;
+            -webkit-font-smoothing: auto;
+        }
+
+        .services-table td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.9rem;
+            color: var(--text-primary);
+        }
+
+        .services-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .services-table tr:hover {
+            background: var(--accent-light);
+        }
+
+        .service-name {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .service-url,
+        .service-ip {
+            color: var(--text-secondary);
+            font-family:
+                'JetBrains Mono',
+                'Fira Code',
+                'SF Mono',
+                Consolas,
+                monospace;
+            font-size: 0.85rem;
+            -webkit-font-smoothing: auto;
+        }
+
+        /* Action buttons container */
+        .action-btns {
+            display: flex;
+            gap: 0.35rem;
+            align-items: center;
+        }
+
+        /* Drag handle */
+        .drag-handle {
+            cursor: grab;
+            text-align: center;
+            vertical-align: middle;
+            color: var(--text-muted);
+            transition: color var(--transition);
+        }
+
+        .drag-handle:hover {
+            color: var(--text-primary);
+        }
+
+        .drag-handle svg {
+            display: block;
+            margin: 0 auto;
+        }
+
+        /* Drag states */
+        tr[draggable="true"] {
+            cursor: grab;
+        }
+
+        tr.dragging {
+            opacity: 0.4;
+            background: var(--accent-light) !important;
+        }
+
+        tr.drag-over {
+            border-top: 2px solid var(--accent) !important;
+        }
+
+        tr.drag-over td {
+            position: relative;
+        }
+
+        tr.drag-over::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: -2px;
+            height: 2px;
+            background: var(--accent);
+            z-index: 1;
+        }
+
+        .action-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            border: 1px solid var(--border-color);
+            background: var(--bg-surface);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all var(--transition);
+            color: var(--text-secondary);
+        }
+
+        .action-btn:hover {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        .action-btn.danger {
+            color: var(--danger);
+        }
+
+        .action-btn.danger:hover {
+            background: var(--danger);
+            border-color: var(--danger);
+            color: white;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-surface);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+            padding: 1.5rem;
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+        }
+
+        .modal h3 {
+            margin-bottom: 1.25rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+
+        .modal .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 0.75rem 1.25rem;
+            border-radius: var(--radius-md);
+            color: white;
+            font-weight: 500;
+            box-shadow: var(--shadow-lg);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 2000;
+            font-size: 0.9rem;
+        }
+
+        .toast.success {
+            background: var(--success);
+        }
+
+        .toast.error {
+            background: var(--danger);
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 2rem 1rem;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .services-table {
+                font-size: 0.8rem;
+            }
+
+            .services-table th,
+            .services-table td {
+                padding: 0.5rem 0.75rem;
+            }
+
+            .form-row {
+                flex-direction: column;
+            }
+
+            .form-group {
+                min-width: 100%;
+            }
+
+            .group-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- ====== Header ====== -->
+        <header class="header-row">
+            <div class="repo-name">
+                <h1>homedash <span>/ admin</span></h1>
+            </div>
+            <div class="admin-actions">
+                <a href="/" class="back-link">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    На главную
+                </a>
+                <button class="theme-toggle" id="themeToggle" type="button" aria-label="Переключить тему" title="Переключить тему">
+                    <svg id="themeIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20">
+                        <path fill="currentColor" d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Groups -->
+        <div id="groupsContainer">
+            {{range .Groups}}
+            {{$groupName := .Name}}
+            <div class="group-section" data-group-name="{{.Name}}">
+                <div class="group-header">
+                    <div class="group-title-row">
+                        <h2>{{.Name}}</h2>
+                        <button class="action-btn" onclick="openRenameGroupModal({{.Name | js}})" title="Переименовать группу">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button class="action-btn danger" onclick="deleteGroup({{.Name | js}})" title="Удалить группу">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <table class="services-table">
+                    <thead>
+                        <tr>
+                            <th style="width:40px"></th>
+                            <th>Название</th>
+                            <th>URL</th>
+                            <th>IP</th>
+                            <th>Verify SSL</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Services}}
+                        <tr draggable="true" data-service-name="{{.Name}}" data-group-name="{{$groupName}}" ondblclick="editService(this.dataset.groupName, this.dataset.serviceName)">
+                            <td class="drag-handle" title="Перетащите для изменения порядка">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+                            </td>
+                            <td class="service-name">{{.Name}}</td>
+                            <td class="service-url">{{if .URL}}{{.URL}}{{else}}—{{end}}</td>
+                            <td class="service-ip">{{if .IP}}{{.IP}}{{else}}—{{end}}</td>
+                            <td>{{if .VerifySSL}}✅{{else}}—{{end}}</td>
+                            <td>
+                                <div class="action-btns">
+                                    <button class="action-btn" onclick="editService({{$groupName | js}}, {{.Name | js}})" title="Редактировать">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                    </button>
+                                    <button class="action-btn" onclick="moveService({{$groupName | js}}, {{.Name | js}})" title="Переместить">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
+                                    </button>
+                                    <button class="action-btn danger" onclick="deleteService({{$groupName | js}}, {{.Name | js}})" title="Удалить">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {{end}}
+                        <tr class="add-service-row" onclick="addServiceToGroup({{$groupName | js}})">
+                            <td colspan="6">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                Добавить сервис
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            {{end}}
+        </div>
+
+        <!-- Add Group Button -->
+        <div class="group-section add-group-section-btn" onclick="openAddGroupModal()">
+            <div class="group-header">
+                <h2>+ Добавить группу</h2>
+            </div>
+        </div>
+
+        <!-- ====== Footer ====== -->
+        <footer class="footer">
+            <span>© homedash · админ-панель</span>
+        </footer>
+
+    </div>
+
+    <!-- Modal for Add/Edit Service -->
+    <div class="modal-overlay" id="serviceModal">
+        <div class="modal">
+            <h3 id="modalTitle">Добавить сервис</h3>
+            <input type="hidden" id="modalGroupName">
+            <input type="hidden" id="modalOldName">
+            <div class="form-group">
+                <label for="modalServiceName">Название</label>
+                <input type="text" id="modalServiceName" placeholder="Например: Grafana">
+            </div>
+            <div class="form-group">
+                <label for="modalServiceURL">URL (опционально)</label>
+                <input type="text" id="modalServiceURL" placeholder="https://example.com">
+            </div>
+            <div class="form-group">
+                <label for="modalServiceIP">IP (опционально)</label>
+                <input type="text" id="modalServiceIP" placeholder="192.168.1.1">
+            </div>
+            <div class="form-group checkbox-group">
+                <input type="checkbox" id="modalServiceSSL">
+                <label for="modalServiceSSL">Verify SSL</label>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal()">Отмена</button>
+                <button class="btn btn-primary" id="modalSaveBtn" onclick="saveService()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Add Group -->
+    <div class="modal-overlay" id="addGroupModal">
+        <div class="modal">
+            <h3>Добавить группу</h3>
+            <div class="form-group">
+                <label for="newGroupName">Название группы</label>
+                <input type="text" id="newGroupName" placeholder="Например: Медиа сервисы" autofocus>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeAddGroupModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="addGroup()">Добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Rename Group -->
+    <div class="modal-overlay" id="renameGroupModal">
+        <div class="modal">
+            <h3>Переименовать группу</h3>
+            <input type="hidden" id="renameOldName">
+            <div class="form-group">
+                <label for="renameNewName">Новое название</label>
+                <input type="text" id="renameNewName" placeholder="Название группы" autofocus>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeRenameGroupModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="confirmRenameGroup()">Переименовать</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Move Service -->
+    <div class="modal-overlay" id="moveModal">
+        <div class="modal">
+            <h3>Переместить сервис</h3>
+            <input type="hidden" id="moveFromGroup">
+            <input type="hidden" id="moveServiceName">
+            <div class="form-group">
+                <label for="moveToGroup">Целевая группа</label>
+                <select id="moveToGroup"></select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeMoveModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="confirmMove()">Переместить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Delete Confirmation -->
+    <div class="modal-overlay" id="deleteModal">
+        <div class="modal">
+            <h3 id="deleteModalTitle">Подтверждение удаления</h3>
+            <p id="deleteModalMessage" style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;"></p>
+            <input type="hidden" id="deleteAction">
+            <input type="hidden" id="deletePayload">
+            <div class="modal-actions">
+                <button class="btn" onclick="closeDeleteModal()">Отмена</button>
+                <button class="btn btn-danger" id="deleteConfirmBtn" onclick="confirmDelete()">Удалить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+    (() => {
+        'use strict';
+
+        /* ── Theme ── */
+        const DARK_PATH = 'M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1';
+        const LIGHT_PATH = 'M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1m18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1M11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1m0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1M5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58m12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06m1.06-12.37c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06M7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06';
+
+        function setThemeIcon(dark) {
+            const el = document.getElementById('themeIcon');
+            if (el) el.querySelector('path').setAttribute('d', dark ? LIGHT_PATH : DARK_PATH);
+        }
+
+        function toggleTheme() {
+            const html = document.documentElement;
+            html.classList.toggle('dark-theme');
+            document.body.classList.toggle('dark-theme');
+            const dark = html.classList.contains('dark-theme');
+            localStorage.setItem('theme', dark ? 'dark' : 'light');
+            setThemeIcon(dark);
+        }
+
+        // Синхронизируем при загрузке
+        const isDark = document.documentElement.classList.contains('dark-theme');
+        if (isDark) document.body.classList.add('dark-theme');
+        setThemeIcon(isDark);
+
+        // Делегирование — гарантированная регистрация
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('#themeToggle');
+            if (btn) { e.preventDefault(); toggleTheme(); }
+        });
+
+        // Глобальные данные групп — JSON массив напрямую
+        window.groupsData = {{.GroupsJSON}};
+
+        /* ── Reload page ── */
+        window.reloadPage = function() {
+            location.reload();
+        };
+
+        /* ── Toast notifications ── */
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type} show`;
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        /* ── API helpers ── */
+        async function api(url, method = 'GET', data = null) {
+            const opts = {
+                method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+            if (data) opts.body = JSON.stringify(data);
+
+            const res = await fetch(url, opts);
+            if (!res.ok) {
+                const text = await res.text();
+                throw new Error(text || `HTTP ${res.status}`);
+            }
+            return res.json();
+        }
+
+        /* ── Add group ── */
+        window.openAddGroupModal = function() {
+            document.getElementById('newGroupName').value = '';
+            document.getElementById('addGroupModal').classList.add('active');
+            setTimeout(() => document.getElementById('newGroupName').focus(), 100);
+        };
+
+        window.closeAddGroupModal = function() {
+            document.getElementById('addGroupModal').classList.remove('active');
+        };
+
+        window.addGroup = async function() {
+            const name = document.getElementById('newGroupName').value.trim();
+            if (!name) {
+                showToast('Введите название группы', 'error');
+                return;
+            }
+            try {
+                await api('/api/admin/group', 'POST', { name });
+                showToast('Группа добавлена');
+                setTimeout(() => location.reload(), 500);
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        };
+
+        /* ── Delete group ── */
+        window.deleteGroup = function(name) {
+            document.getElementById('deleteModalTitle').textContent = 'Удалить группу?';
+            document.getElementById('deleteModalMessage').textContent = `Удалить группу "${name}" и все её сервисы? Это действие нельзя отменить.`;
+            document.getElementById('deleteAction').value = 'deleteGroup';
+            document.getElementById('deletePayload').value = name;
+            document.getElementById('deleteModal').classList.add('active');
+        };
+
+        window._doDeleteGroup = async function(name) {
+            try {
+                await api('/api/admin/group', 'DELETE', { name });
+                showToast('Группа удалена');
+                setTimeout(() => location.reload(), 500);
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        };
+
+        /* ── Rename group ── */
+        window.openRenameGroupModal = function(oldName) {
+            document.getElementById('renameOldName').value = oldName;
+            document.getElementById('renameNewName').value = oldName;
+            document.getElementById('renameGroupModal').classList.add('active');
+            setTimeout(() => {
+                const input = document.getElementById('renameNewName');
+                input.focus();
+                input.select();
+            }, 100);
+        };
+
+        window.closeRenameGroupModal = function() {
+            document.getElementById('renameGroupModal').classList.remove('active');
+        };
+
+        window.confirmRenameGroup = async function() {
+            const oldName = document.getElementById('renameOldName').value;
+            const newName = document.getElementById('renameNewName').value.trim();
+            if (!newName || newName === oldName) {
+                closeRenameGroupModal();
+                return;
+            }
+            try {
+                await api('/api/admin/group', 'PUT', { old_name: oldName, new_name: newName });
+                showToast('Группа переименована');
+                closeRenameGroupModal();
+                setTimeout(() => location.reload(), 500);
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        };
+
+        document.getElementById('renameNewName').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmRenameGroup();
+            }
+        });
+
+        /* ── Add service ── */
+        window.addServiceToGroup = function(groupName) {
+            document.getElementById('modalTitle').textContent = 'Добавить сервис';
+            document.getElementById('modalGroupName').value = groupName;
+            document.getElementById('modalOldName').value = '';
+            document.getElementById('modalServiceName').value = '';
+            document.getElementById('modalServiceURL').value = '';
+            document.getElementById('modalServiceIP').value = '';
+            document.getElementById('modalServiceSSL').checked = false;
+            document.getElementById('serviceModal').classList.add('active');
+        };
+
+        /* ── Edit service ── */
+        window.editService = function(groupName, serviceName) {
+            // Находим сервис в данных
+            const group = window.groupsData.find(g => g.name === groupName);
+            if (!group) {
+                showToast('Группа не найдена: ' + groupName, 'error');
+                return;
+            }
+            const services = group.services || [];
+            const service = services.find(s => s.name === serviceName);
+            if (!service) {
+                showToast('Сервис не найден: ' + serviceName, 'error');
+                return;
+            }
+
+            document.getElementById('modalTitle').textContent = 'Редактировать сервис';
+            document.getElementById('modalGroupName').value = groupName;
+            document.getElementById('modalOldName').value = serviceName;
+            document.getElementById('modalServiceName').value = service.name || '';
+            document.getElementById('modalServiceURL').value = service.url || '';
+            document.getElementById('modalServiceIP').value = service.ip || '';
+            document.getElementById('modalServiceSSL').checked = service.verify_ssl || false;
+            document.getElementById('serviceModal').classList.add('active');
+        };
+
+        /* ── Save service ── */
+        window.saveService = async function() {
+            const groupName = document.getElementById('modalGroupName').value;
+            const oldName = document.getElementById('modalOldName').value;
+            const service = {
+                name: document.getElementById('modalServiceName').value.trim(),
+                url: document.getElementById('modalServiceURL').value.trim(),
+                ip: document.getElementById('modalServiceIP').value.trim(),
+                verify_ssl: document.getElementById('modalServiceSSL').checked
+            };
+
+            if (!service.name) {
+                showToast('Введите название сервиса', 'error');
+                return;
+            }
+
+            if (!service.url && !service.ip) {
+                showToast('Укажите URL или IP', 'error');
+                return;
+            }
+
+            try {
+                if (oldName) {
+                    // Обновление
+                    await api('/api/admin/service', 'PUT', {
+                        group_name: groupName,
+                        old_name: oldName,
+                        new_service: service
+                    });
+                    showToast('Сервис обновлён');
+                } else {
+                    // Добавление
+                    await api('/api/admin/service', 'POST', {
+                        group_name: groupName,
+                        service: service
+                    });
+                    showToast('Сервис добавлен');
+                }
+                closeModal();
+                setTimeout(() => location.reload(), 500);
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        };
+
+        /* ── Close modal ── */
+        window.closeModal = function() {
+            document.getElementById('serviceModal').classList.remove('active');
+        };
+
+        /* ── Delete confirmation modal ── */
+        window.closeDeleteModal = function() {
+            document.getElementById('deleteModal').classList.remove('active');
+        };
+
+        window.confirmDelete = async function() {
+            const action = document.getElementById('deleteAction').value;
+            const payload = document.getElementById('deletePayload').value;
+
+            closeDeleteModal();
+
+            if (action === 'deleteGroup') {
+                await window._doDeleteGroup(payload);
+            } else if (action === 'deleteService') {
+                const data = JSON.parse(payload);
+                await window._doDeleteService(data.group_name, data.service_name);
+            }
+        };
+
+        /* ── Delete service ── */
+        window.deleteService = function(groupName, serviceName) {
+            document.getElementById('deleteModalTitle').textContent = 'Удалить сервис?';
+            document.getElementById('deleteModalMessage').textContent = `Удалить сервис "${serviceName}" из группы "${groupName}"?`;
+            document.getElementById('deleteAction').value = 'deleteService';
+            document.getElementById('deletePayload').value = JSON.stringify({ group_name: groupName, service_name: serviceName });
+            document.getElementById('deleteModal').classList.add('active');
+        };
+
+        window._doDeleteService = async function(groupName, serviceName) {
+            try {
+                await api('/api/admin/service', 'DELETE', {
+                    group_name: groupName,
+                    service_name: serviceName
+                });
+                showToast('Сервис удалён');
+                setTimeout(() => location.reload(), 500);
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        };
+
+        /* ── Move service ── */
+        window.moveService = function(groupName, serviceName) {
+            document.getElementById('moveFromGroup').value = groupName;
+            document.getElementById('moveServiceName').value = serviceName;
+
+            // Заполняем select группами
+            const select = document.getElementById('moveToGroup');
+            select.innerHTML = '';
+            
+            if (!window.groupsData || window.groupsData.length === 0) {
+                showToast('Нет данных о группах', 'error');
+                return;
+            }
+            
+            window.groupsData.forEach(g => {
+                if (g.name !== groupName) {
+                    const opt = document.createElement('option');
+                    opt.value = g.name;
+                    opt.textContent = g.name;
+                    select.appendChild(opt);
+                }
+            });
+
+            if (select.options.length === 0) {
+                showToast('Нет других групп для перемещения', 'error');
+                return;
+            }
+
+            document.getElementById('moveModal').classList.add('active');
+        };
+
+        /* ── Confirm move ── */
+        window.confirmMove = async function() {
+            const fromGroup = document.getElementById('moveFromGroup').value;
+            const toGroup = document.getElementById('moveToGroup').value;
+            const service = document.getElementById('moveServiceName').value;
+
+            try {
+                await api('/api/admin/service/move', 'POST', {
+                    from_group: fromGroup,
+                    to_group: toGroup,
+                    service: service
+                });
+                showToast('Сервис перемещён');
+                closeMoveModal();
+                setTimeout(() => location.reload(), 500);
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        };
+
+        /* ── Close move modal ── */
+        window.closeMoveModal = function() {
+            document.getElementById('moveModal').classList.remove('active');
+        };
+
+        /* ── Close modals on overlay click ── */
+        document.getElementById('serviceModal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+        document.getElementById('moveModal').addEventListener('click', function(e) {
+            if (e.target === this) closeMoveModal();
+        });
+        document.getElementById('addGroupModal').addEventListener('click', function(e) {
+            if (e.target === this) closeAddGroupModal();
+        });
+        document.getElementById('renameGroupModal').addEventListener('click', function(e) {
+            if (e.target === this) closeRenameGroupModal();
+        });
+        document.getElementById('deleteModal').addEventListener('click', function(e) {
+            if (e.target === this) closeDeleteModal();
+        });
+
+        /* ── Drag & Drop ── */
+        let draggedRow = null;
+
+        document.querySelectorAll('tbody').forEach(tbody => {
+            tbody.addEventListener('dragstart', function(e) {
+                const row = e.target.closest('tr[draggable="true"]');
+                if (!row) return;
+                draggedRow = row;
+                row.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', '');
+            });
+
+            tbody.addEventListener('dragend', function(e) {
+                const row = e.target.closest('tr[draggable="true"]');
+                if (!row) return;
+                row.classList.remove('dragging');
+                document.querySelectorAll('.drag-over').forEach(r => r.classList.remove('drag-over'));
+                draggedRow = null;
+            });
+
+            tbody.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                const row = e.target.closest('tr[draggable="true"]');
+                if (!row || row === draggedRow) return;
+                document.querySelectorAll('.drag-over').forEach(r => r.classList.remove('drag-over'));
+                row.classList.add('drag-over');
+            });
+
+            tbody.addEventListener('dragleave', function(e) {
+                const row = e.target.closest('tr[draggable="true"]');
+                if (row) row.classList.remove('drag-over');
+            });
+
+            tbody.addEventListener('drop', async function(e) {
+                e.preventDefault();
+                const targetRow = e.target.closest('tr[draggable="true"]');
+                if (!targetRow || targetRow === draggedRow) return;
+
+                const tbody = this;
+                const rows = [...tbody.querySelectorAll('tr[draggable="true"]')];
+                const fromIdx = rows.indexOf(draggedRow);
+                const toIdx = rows.indexOf(targetRow);
+
+                if (fromIdx === -1 || toIdx === -1) return;
+
+                // Перемещаем строку в DOM
+                if (fromIdx < toIdx) {
+                    tbody.insertBefore(draggedRow, targetRow.nextSibling);
+                } else {
+                    tbody.insertBefore(draggedRow, targetRow);
+                }
+
+                targetRow.classList.remove('drag-over');
+
+                // Собираем новый порядок
+                const groupName = draggedRow.closest('.group-section').dataset.groupName;
+                const newOrder = [...tbody.querySelectorAll('tr[draggable="true"]')].map(r => r.dataset.serviceName);
+
+                // Сохраняем на сервере
+                try {
+                    await api('/api/admin/service/reorder', 'POST', {
+                        group_name: groupName,
+                        services: newOrder
+                    });
+                } catch (err) {
+                    showToast('Ошибка сохранения порядка: ' + err.message, 'error');
+                    // Откат — перезагрузим
+                    setTimeout(() => location.reload(), 1000);
+                }
+            });
+        });
+
+        /* ── Keyboard shortcuts ── */
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeModal();
+                closeMoveModal();
+                closeAddGroupModal();
+                closeRenameGroupModal();
+                closeDeleteModal();
+            }
+        });
+    })();
+    </script>
+</body>
+</html>
