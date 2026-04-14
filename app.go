@@ -311,6 +311,7 @@ func (app *App) buildRouter() http.Handler {
 	mux.HandleFunc("/", app.ServeHome)
 	mux.HandleFunc("/api/status", app.ServeStatus)
 	mux.HandleFunc("/health", app.ServeHealth)
+	mux.HandleFunc("/api/myip", app.ServeMyIP)
 	mux.HandleFunc("/api/metrics", app.ServeMetrics)
 	mux.HandleFunc("/metrics", app.ServePrometheusMetrics)
 

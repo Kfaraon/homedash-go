@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -111,6 +112,42 @@ func (app *App) ServeHealth(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		slog.Debug("Failed to encode health check", "error", err)
 	}
+}
+
+// ServeMyIP — returns public IP address
+func (app *App) ServeMyIP(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.ipify.org", nil)
+	if err != nil {
+		slog.Debug("Failed to create myip request", "error", err)
+		http.Error(w, "Failed to determine IP", http.StatusBadGateway)
+		return
+	}
+
+	resp, err := getHTTPClient(true).Do(req)
+	if err != nil {
+		slog.Debug("Failed to fetch public IP", "error", err)
+		http.Error(w, "Failed to determine IP", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "External service unavailable", http.StatusBadGateway)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		http.Error(w, "Failed to read response", http.StatusBadGateway)
+		return
+	}
+
+	ip := strings.TrimSpace(string(body))
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(ip))
 }
 
 // ServeMetrics — handler for metrics (JSON format for frontend)
