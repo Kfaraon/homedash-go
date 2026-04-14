@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"net/url"
 	"strings"
+	"sync"
 )
 
 // iconMap — mapping of service names to icons and colors
@@ -152,12 +153,36 @@ var pastelColors = []string{
 // iconMapKeys — cached keys for substring search (optimization)
 var iconMapKeys []string
 
+// iconCache stores resolved icon/color values to avoid repeated lookups
+var (
+	iconCache      = make(map[string]string) // name -> icon
+	colorCache     = make(map[string]string) // name -> bgColor
+	iconColorCache = make(map[string]string) // name -> iconColor
+	cdnCache       = make(map[string]string) // name:icon -> cdnURL
+	cacheMu        sync.RWMutex
+)
+
 func init() {
 	// Cache keys for iteration
 	iconMapKeys = make([]string, 0, len(iconMap))
 	for k := range iconMap {
 		iconMapKeys = append(iconMapKeys, k)
 	}
+}
+
+// cacheGet retrieves a value from the icon cache
+func cacheGet(cache map[string]string, key string) (string, bool) {
+	val, ok := cache[key]
+	return val, ok
+}
+
+// cacheSet stores a value in the icon cache
+func cacheSet(cache map[string]string, key, value string) {
+	// Limit cache size — clear entirely if at capacity
+	if len(cache) >= 500 {
+		clear(cache)
+	}
+	cache[key] = value
 }
 
 func generatePastelColor(s string) string {
@@ -170,11 +195,28 @@ func resolveIcon(name, icon string) string {
 	if strings.TrimSpace(icon) != "" {
 		return icon
 	}
-	lower := strings.ToLower(strings.TrimSpace(name))
+	key := strings.ToLower(strings.TrimSpace(name))
+
+	cacheMu.RLock()
+	if val, ok := cacheGet(iconCache, key); ok {
+		cacheMu.RUnlock()
+		return val
+	}
+	cacheMu.RUnlock()
+
+	result := resolveIconUncached(key)
+
+	cacheMu.Lock()
+	cacheSet(iconCache, key, result)
+	cacheMu.Unlock()
+
+	return result
+}
+
+func resolveIconUncached(lower string) string {
 	if e, ok := iconMap[lower]; ok {
 		return e.Icon
 	}
-	// Optimized substring search over cached keys
 	for _, key := range iconMapKeys {
 		if strings.Contains(lower, key) || strings.Contains(key, lower) {
 			return iconMap[key].Icon
@@ -186,11 +228,28 @@ func resolveIcon(name, icon string) string {
 }
 
 func resolveColor(name string) string {
-	lower := strings.ToLower(strings.TrimSpace(name))
+	key := strings.ToLower(strings.TrimSpace(name))
+
+	cacheMu.RLock()
+	if val, ok := cacheGet(colorCache, key); ok {
+		cacheMu.RUnlock()
+		return val
+	}
+	cacheMu.RUnlock()
+
+	result := resolveColorUncached(key)
+
+	cacheMu.Lock()
+	cacheSet(colorCache, key, result)
+	cacheMu.Unlock()
+
+	return result
+}
+
+func resolveColorUncached(lower string) string {
 	if e, ok := iconMap[lower]; ok && e.BgColor != "" {
 		return e.BgColor
 	}
-	// Optimized substring search
 	for _, key := range iconMapKeys {
 		e := iconMap[key]
 		if e.BgColor == "" {
@@ -204,11 +263,28 @@ func resolveColor(name string) string {
 }
 
 func resolveIconColor(name string) string {
-	lower := strings.ToLower(strings.TrimSpace(name))
+	key := strings.ToLower(strings.TrimSpace(name))
+
+	cacheMu.RLock()
+	if val, ok := cacheGet(iconColorCache, key); ok {
+		cacheMu.RUnlock()
+		return val
+	}
+	cacheMu.RUnlock()
+
+	result := resolveIconColorUncached(key)
+
+	cacheMu.Lock()
+	cacheSet(iconColorCache, key, result)
+	cacheMu.Unlock()
+
+	return result
+}
+
+func resolveIconColorUncached(lower string) string {
 	if e, ok := iconMap[lower]; ok && e.IconColor != "" {
 		return e.IconColor
 	}
-	// Optimized substring search
 	for _, key := range iconMapKeys {
 		e := iconMap[key]
 		if e.IconColor == "" {
@@ -222,6 +298,25 @@ func resolveIconColor(name string) string {
 }
 
 func resolveIconCDN(name, explicitIcon string) string {
+	cacheKey := name + ":" + explicitIcon
+
+	cacheMu.RLock()
+	if val, ok := cacheGet(cdnCache, cacheKey); ok {
+		cacheMu.RUnlock()
+		return val
+	}
+	cacheMu.RUnlock()
+
+	result := resolveIconCDNUncached(name, explicitIcon)
+
+	cacheMu.Lock()
+	cacheSet(cdnCache, cacheKey, result)
+	cacheMu.Unlock()
+
+	return result
+}
+
+func resolveIconCDNUncached(name, explicitIcon string) string {
 	icon := resolveIcon(name, explicitIcon)
 
 	if strings.HasPrefix(icon, "http://") || strings.HasPrefix(icon, "https://") {

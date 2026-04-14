@@ -10,18 +10,6 @@
           "verify_ssl": false
         },
         {
-          "name": "Discord",
-          "url": "https://discord.com",
-          "ip": "",
-          "verify_ssl": false
-        },
-        {
-          "name": "GitHub",
-          "url": "https://github.com",
-          "ip": "",
-          "verify_ssl": false
-        },
-        {
           "name": "Spotify",
           "url": "https://spotify.com",
           "ip": "",
@@ -34,8 +22,8 @@
           "verify_ssl": false
         },
         {
-          "name": "YouTube",
-          "url": "https://youtube.com",
+          "name": "Cloudflare",
+          "url": "https://cloudflare.com",
           "ip": "",
           "verify_ssl": false
         },
@@ -46,8 +34,20 @@
           "verify_ssl": false
         },
         {
-          "name": "Cloudflare",
-          "url": "https://cloudflare.com",
+          "name": "YouTube",
+          "url": "https://youtube.com",
+          "ip": "",
+          "verify_ssl": false
+        },
+        {
+          "name": "Discord",
+          "url": "https://discord.com",
+          "ip": "",
+          "verify_ssl": false
+        },
+        {
+          "name": "GitHub",
+          "url": "https://github.com",
           "ip": "",
           "verify_ssl": false
         }
@@ -57,51 +57,51 @@
       "name": "Внутренние сервисы",
       "services": [
         {
-          "name": "AdGuard",
-          "url": "http://host.docker.internal:3000",
-          "ip": "host.docker.internal",
+          "name": "Home Assistant",
+          "url": "http://127.0.0.1:8123",
+          "ip": "127.0.0.1",
           "verify_ssl": false
         },
         {
-          "name": "Home Assistant",
-          "url": "http://host.docker.internal:8123",
-          "ip": "host.docker.internal",
+          "name": "AdGuard",
+          "url": "http://127.0.0.1:3000",
+          "ip": "127.0.0.1",
           "verify_ssl": false
         },
         {
           "name": "Nginx",
-          "url": "http://host.docker.internal:80",
-          "ip": "host.docker.internal",
+          "url": "http://127.0.0.1:80",
+          "ip": "127.0.0.1",
           "verify_ssl": false
         },
         {
           "name": "PostgreSQL",
           "url": "",
-          "ip": "host.docker.internal",
+          "ip": "127.0.0.1",
           "verify_ssl": false
         },
         {
           "name": "Grafana",
-          "url": "http://host.docker.internal:3000",
-          "ip": "host.docker.internal",
+          "url": "http://127.0.0.1:3000",
+          "ip": "127.0.0.1",
           "verify_ssl": false
         },
         {
           "name": "Docker",
-          "url": "http://host.docker.internal:2375",
-          "ip": "host.docker.internal",
+          "url": "http://127.0.0.1:2375",
+          "ip": "127.0.0.1",
           "verify_ssl": false
         },
         {
           "name": "Portainer",
-          "url": "http://host.docker.internal:9000",
-          "ip": "host.docker.internal",
+          "url": "http://127.0.0.1:9000",
+          "ip": "127.0.0.1",
           "verify_ssl": false
         },
         {
           "name": "Prometheus",
-          "url": "http://host.docker.internal:9090",
-          "ip": "host.docker.internal",
+          "url": "http://127.0.0.1:9090",
+          "ip": "127.0.0.1",
           "verify_ssl": false
         }
       ]

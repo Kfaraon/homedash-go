@@ -117,7 +117,7 @@ func TestValidateGroups_MissingURLAndIP(t *testing.T) {
 }
 
 func TestValidateGroups_DuplicateNames(t *testing.T) {
-	// validateGroups only warns (logs), doesn't return error
+	// validateGroups now returns error for duplicates
 	groups := []Group{
 		{
 			Name: "Test",
@@ -128,8 +128,8 @@ func TestValidateGroups_DuplicateNames(t *testing.T) {
 		},
 	}
 	err := validateGroups(groups)
-	if err != nil {
-		t.Errorf("expected no error (only warning), got: %v", err)
+	if err == nil {
+		t.Errorf("expected error for duplicate names, got nil")
 	}
 }
 
@@ -205,6 +205,65 @@ func TestSaveGroupsToFile_JSONFormat(t *testing.T) {
 	}
 	if len(root.Groups) != 1 {
 		t.Errorf("expected groups wrapper, got: %s", string(data))
+	}
+}
+
+// ─── loadAdminConfig tests ───
+
+func TestLoadAdminConfig_WithAdminSection(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.json")
+
+	data := map[string]any{
+		"groups": []map[string]any{
+			{
+				"name":     "Test",
+				"services": []map[string]any{{"name": "Svc", "url": "http://localhost"}},
+			},
+		},
+		"admin": map[string]any{
+			"require_api_key": false,
+		},
+	}
+	writeJSON(t, cfg, data)
+
+	adminCfg, err := loadAdminConfig(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if adminCfg.RequireAPIKey != false {
+		t.Errorf("expected require_api_key=false, got %v", adminCfg.RequireAPIKey)
+	}
+}
+
+func TestLoadAdminConfig_WithoutAdminSection(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.json")
+
+	data := map[string]any{
+		"groups": []map[string]any{
+			{
+				"name":     "Test",
+				"services": []map[string]any{{"name": "Svc", "url": "http://localhost"}},
+			},
+		},
+	}
+	writeJSON(t, cfg, data)
+
+	adminCfg, err := loadAdminConfig(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Default should be true
+	if adminCfg.RequireAPIKey != true {
+		t.Errorf("expected default require_api_key=true, got %v", adminCfg.RequireAPIKey)
+	}
+}
+
+func TestLoadAdminConfig_FileNotFound(t *testing.T) {
+	_, err := loadAdminConfig("/nonexistent/config.json")
+	if err == nil {
+		t.Fatal("expected error for missing file")
 	}
 }
 

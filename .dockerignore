@@ -4,6 +4,11 @@
 .gitattributes
 .github
 
+# Environment files (не копируем .env в image)
+.env
+.env.local
+.env.*.local
+
 # Временные файлы Go
 *.exe
 *.exe~

@@ -1,8 +1,15 @@
 package main
 
-import "html/template"
+import (
+	"html/template"
+)
 
 // ─── Types ───
+
+// AdminConfig — настройки админ-панели
+type AdminConfig struct {
+	RequireAPIKey bool `json:"require_api_key"` // default: true (require API key)
+}
 
 // Service описывает один сервис для мониторинга
 type Service struct {
@@ -10,7 +17,7 @@ type Service struct {
 	URL       string `json:"url"`
 	IP        string `json:"ip"`
 	Icon      string `json:"icon,omitempty"`
-	VerifySSL bool   `json:"verify_ssl"`
+	VerifySSL bool   `json:"verify_ssl"` // default: true (SSL verification enabled)
 }
 
 // Group — логическая группа сервисов

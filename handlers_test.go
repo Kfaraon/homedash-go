@@ -10,13 +10,9 @@ import (
 	"testing"
 )
 
-// setupAdminTest creates a test server with admin endpoints
+// setupAdminTest creates a test App and server with admin endpoints
 func setupAdminTest(t *testing.T) (*httptest.Server, func()) {
 	t.Helper()
-
-	// Set API key for tests
-	oldKey := adminAPIKey
-	adminAPIKey = "test-secret-key"
 
 	// Temporary config
 	tmp := t.TempDir()
@@ -31,60 +27,42 @@ func setupAdminTest(t *testing.T) (*httptest.Server, func()) {
 	}
 	writeJSON(t, cfg, initialConfig)
 
-	oldConfigFile := configFile
-	configFile = cfg
+	// Create app with test config
+	app := &App{
+		ConfigFile:  cfg,
+		CacheTTL:    3,
+		AdminAPIKey: "test-secret-key",
+		State: &AppState{
+			cache: make(map[string]Status),
+			stale: make(map[string]Status),
+		},
+		Metrics: NewMetrics(),
+		Done:    make(chan struct{}),
+	}
 
 	// Load groups
-	groups, err := loadGroups(cfg)
+	groups, err := app.LoadGroups()
 	if err != nil {
 		t.Fatalf("load error: %v", err)
 	}
-	state.groupsMu.Lock()
-	state.groups = groups
-	state.groupsMu.Unlock()
+	app.SetGroupsNoCacheClear(groups)
 
-	// Create test server
-	mux := http.NewServeMux()
+	// Create admin router
 	adminMux := http.NewServeMux()
-	adminMux.HandleFunc("/api/admin/groups", apiAdminGroups)
-	adminMux.HandleFunc("/api/admin/group", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			apiAdminGroups(w, r)
-		case http.MethodPost:
-			apiAdminAddGroup(w, r)
-		case http.MethodDelete:
-			apiAdminDeleteGroup(w, r)
-		case http.MethodPut:
-			apiAdminRenameGroup(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-	adminMux.HandleFunc("/api/admin/service", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			apiAdminAddService(w, r)
-		case http.MethodPut:
-			apiAdminUpdateService(w, r)
-		case http.MethodDelete:
-			apiAdminDeleteService(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-	adminMux.HandleFunc("/api/admin/service/move", apiAdminMoveService)
-	adminMux.HandleFunc("/api/admin/service/reorder", apiAdminReorderServices)
+	adminMux.HandleFunc("/api/admin/groups", app.apiAdminGroups)
+	adminMux.HandleFunc("/api/admin/group", app.handleGroupCRUD)
+	adminMux.HandleFunc("/api/admin/service", app.handleServiceCRUD)
+	adminMux.HandleFunc("/api/admin/service/move", app.apiAdminMoveService)
+	adminMux.HandleFunc("/api/admin/service/reorder", app.apiAdminReorderServices)
 
-	mux.Handle("/admin", adminAuthMiddleware(adminMux))
-	mux.Handle("/api/admin/", adminAuthMiddleware(adminMux))
+	mux := http.NewServeMux()
+	mux.Handle("/admin", app.adminAuthMiddleware(adminMux))
+	mux.Handle("/api/admin/", app.adminAuthMiddleware(adminMux))
 
 	srv := httptest.NewServer(mux)
 
 	return srv, func() {
 		srv.Close()
-		adminAPIKey = oldKey
-		configFile = oldConfigFile
 	}
 }
 
@@ -109,17 +87,23 @@ func authRequest(method, url string, body any) (*http.Response, error) {
 // ─── Auth tests ───
 
 func TestAdminAuth_NoKey(t *testing.T) {
-	oldKey := adminAPIKey
-	adminAPIKey = ""
-	defer func() { adminAPIKey = oldKey }()
+	app := &App{
+		AdminAPIKey: "",
+		State: &AppState{
+			cache: make(map[string]Status),
+			stale: make(map[string]Status),
+		},
+		Metrics: NewMetrics(),
+	}
+	app.RequireAdminAuth.Store(true)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 	rec := httptest.NewRecorder()
 
-	mux := http.NewServeMux()
 	adminMux := http.NewServeMux()
-	adminMux.HandleFunc("/api/admin/groups", apiAdminGroups)
-	mux.Handle("/api/admin/", adminAuthMiddleware(adminMux))
+	adminMux.HandleFunc("/api/admin/groups", app.apiAdminGroups)
+	mux := http.NewServeMux()
+	mux.Handle("/api/admin/", app.adminAuthMiddleware(adminMux))
 
 	mux.ServeHTTP(rec, req)
 
@@ -129,14 +113,24 @@ func TestAdminAuth_NoKey(t *testing.T) {
 }
 
 func TestAdminAuth_InvalidKey(t *testing.T) {
+	app := &App{
+		AdminAPIKey: "correct-key",
+		State: &AppState{
+			cache: make(map[string]Status),
+			stale: make(map[string]Status),
+		},
+		Metrics: NewMetrics(),
+	}
+	app.RequireAdminAuth.Store(true)
+
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 	req.Header.Set("Authorization", "Bearer wrong-key")
 	rec := httptest.NewRecorder()
 
-	mux := http.NewServeMux()
 	adminMux := http.NewServeMux()
-	adminMux.HandleFunc("/api/admin/groups", apiAdminGroups)
-	mux.Handle("/api/admin/", adminAuthMiddleware(adminMux))
+	adminMux.HandleFunc("/api/admin/groups", app.apiAdminGroups)
+	mux := http.NewServeMux()
+	mux.Handle("/api/admin/", app.adminAuthMiddleware(adminMux))
 
 	mux.ServeHTTP(rec, req)
 
@@ -146,17 +140,23 @@ func TestAdminAuth_InvalidKey(t *testing.T) {
 }
 
 func TestAdminAuth_NoAuthHeader(t *testing.T) {
-	oldKey := adminAPIKey
-	adminAPIKey = "test-key"
-	defer func() { adminAPIKey = oldKey }()
+	app := &App{
+		AdminAPIKey: "test-key",
+		State: &AppState{
+			cache: make(map[string]Status),
+			stale: make(map[string]Status),
+		},
+		Metrics: NewMetrics(),
+	}
+	app.RequireAdminAuth.Store(true)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 	rec := httptest.NewRecorder()
 
-	mux := http.NewServeMux()
 	adminMux := http.NewServeMux()
-	adminMux.HandleFunc("/api/admin/groups", apiAdminGroups)
-	mux.Handle("/api/admin/", adminAuthMiddleware(adminMux))
+	adminMux.HandleFunc("/api/admin/groups", app.apiAdminGroups)
+	mux := http.NewServeMux()
+	mux.Handle("/api/admin/", app.adminAuthMiddleware(adminMux))
 
 	mux.ServeHTTP(rec, req)
 
@@ -218,13 +218,11 @@ func TestAdminAddGroup_Duplicate(t *testing.T) {
 	srv, cleanup := setupAdminTest(t)
 	defer cleanup()
 
-	// Add first time
 	resp1, _ := authRequest(http.MethodPost, srv.URL+"/api/admin/group", map[string]string{
 		"name": "DupGroup",
 	})
 	resp1.Body.Close()
 
-	// Second time — should conflict
 	resp2, _ := authRequest(http.MethodPost, srv.URL+"/api/admin/group", map[string]string{
 		"name": "DupGroup",
 	})
@@ -239,13 +237,11 @@ func TestAdminDeleteGroup(t *testing.T) {
 	srv, cleanup := setupAdminTest(t)
 	defer cleanup()
 
-	// First add
 	resp1, _ := authRequest(http.MethodPost, srv.URL+"/api/admin/group", map[string]string{
 		"name": "ToDelete",
 	})
 	resp1.Body.Close()
 
-	// Now delete
 	resp2, err := authRequest(http.MethodDelete, srv.URL+"/api/admin/group", map[string]string{
 		"name": "ToDelete",
 	})
@@ -259,7 +255,6 @@ func TestAdminDeleteGroup(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", resp2.StatusCode, string(body))
 	}
 
-	// Verify the group was deleted
 	resp3, _ := authRequest(http.MethodGet, srv.URL+"/api/admin/groups", nil)
 	defer resp3.Body.Close()
 
@@ -278,13 +273,11 @@ func TestAdminRenameGroup(t *testing.T) {
 	srv, cleanup := setupAdminTest(t)
 	defer cleanup()
 
-	// Add group
 	resp1, _ := authRequest(http.MethodPost, srv.URL+"/api/admin/group", map[string]string{
 		"name": "OldName",
 	})
 	resp1.Body.Close()
 
-	// Rename
 	resp2, err := authRequest(http.MethodPut, srv.URL+"/api/admin/group", map[string]string{
 		"old_name": "OldName",
 		"new_name": "NewName",
@@ -299,7 +292,6 @@ func TestAdminRenameGroup(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", resp2.StatusCode, string(body))
 	}
 
-	// Verify
 	resp3, _ := authRequest(http.MethodGet, srv.URL+"/api/admin/groups", nil)
 	defer resp3.Body.Close()
 
@@ -364,7 +356,6 @@ func TestAdminDeleteService(t *testing.T) {
 	srv, cleanup := setupAdminTest(t)
 	defer cleanup()
 
-	// Add service
 	resp1, _ := authRequest(http.MethodPost, srv.URL+"/api/admin/service", map[string]any{
 		"group_name": "TestGroup",
 		"service": map[string]any{
@@ -374,7 +365,6 @@ func TestAdminDeleteService(t *testing.T) {
 	})
 	resp1.Body.Close()
 
-	// Delete
 	resp2, err := authRequest(http.MethodDelete, srv.URL+"/api/admin/service", map[string]string{
 		"group_name":   "TestGroup",
 		"service_name": "ToDelete",
@@ -394,7 +384,6 @@ func TestAdminUpdateService(t *testing.T) {
 	srv, cleanup := setupAdminTest(t)
 	defer cleanup()
 
-	// Add service
 	resp1, _ := authRequest(http.MethodPost, srv.URL+"/api/admin/service", map[string]any{
 		"group_name": "TestGroup",
 		"service": map[string]any{
@@ -404,12 +393,11 @@ func TestAdminUpdateService(t *testing.T) {
 	})
 	resp1.Body.Close()
 
-	// Update
 	resp2, err := authRequest(http.MethodPut, srv.URL+"/api/admin/service", map[string]any{
 		"group_name": "TestGroup",
 		"old_name":   "OldService",
 		"new_service": map[string]any{
-			"name": "UpdatedService",
+			"name": "Updated Service",
 			"url":  "http://localhost:7071",
 			"ip":   "127.0.0.1",
 		},
@@ -431,13 +419,11 @@ func TestAdminMoveService(t *testing.T) {
 	srv, cleanup := setupAdminTest(t)
 	defer cleanup()
 
-	// Add second group
 	resp1, _ := authRequest(http.MethodPost, srv.URL+"/api/admin/group", map[string]string{
 		"name": "TargetGroup",
 	})
 	resp1.Body.Close()
 
-	// Add service to first group
 	resp2, _ := authRequest(http.MethodPost, srv.URL+"/api/admin/service", map[string]any{
 		"group_name": "TestGroup",
 		"service": map[string]any{
@@ -447,7 +433,6 @@ func TestAdminMoveService(t *testing.T) {
 	})
 	resp2.Body.Close()
 
-	// Move
 	resp3, err := authRequest(http.MethodPost, srv.URL+"/api/admin/service/move", map[string]string{
 		"from_group": "TestGroup",
 		"to_group":   "TargetGroup",
@@ -468,7 +453,6 @@ func TestAdminReorderServices(t *testing.T) {
 	srv, cleanup := setupAdminTest(t)
 	defer cleanup()
 
-	// Add two services
 	resp1, _ := authRequest(http.MethodPost, srv.URL+"/api/admin/service", map[string]any{
 		"group_name": "TestGroup",
 		"service":    map[string]string{"name": "SvcA", "url": "http://a"},
@@ -481,7 +465,6 @@ func TestAdminReorderServices(t *testing.T) {
 	})
 	resp2.Body.Close()
 
-	// Reorder
 	resp3, err := authRequest(http.MethodPost, srv.URL+"/api/admin/service/reorder", map[string]any{
 		"group_name": "TestGroup",
 		"services":   []string{"SvcB", "SvcA"},
@@ -500,35 +483,31 @@ func TestAdminReorderServices(t *testing.T) {
 // ─── serveAdmin tests ───
 
 func TestServeAdmin_PathCheck(t *testing.T) {
-	oldKey := adminAPIKey
-	adminAPIKey = "test-key"
-	defer func() { adminAPIKey = oldKey }()
-
-	// Save and restore adminTmpl
-	oldAdminTmpl := adminTmpl
-	defer func() { adminTmpl = oldAdminTmpl }()
-
-	adminTmpl = nil // will be set below
+	app := &App{
+		AdminAPIKey: "test-key",
+		State: &AppState{
+			cache: make(map[string]Status),
+			stale: make(map[string]Status),
+		},
+		Metrics: NewMetrics(),
+	}
 
 	// Verify serveAdmin returns 404 for wrong path
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/admin/other", nil)
 
-	// serveAdmin should return 404
-	serveAdmin(rec, req)
+	app.ServeAdmin(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rec.Code)
 	}
-
-	adminTmpl = oldAdminTmpl
 }
 
 // ─── Middleware tests ───
 
 func TestMaxBytesMiddleware(t *testing.T) {
-	handler := maxBytesMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Try to read body — should get size exceeded error here
+	app := &App{}
+	handler := app.maxBytesMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "too large", http.StatusRequestEntityTooLarge)
@@ -538,7 +517,6 @@ func TestMaxBytesMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// Large body (2MB > 1MB limit)
 	largeBody := make([]byte, 2<<20)
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(largeBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -552,8 +530,9 @@ func TestMaxBytesMiddleware(t *testing.T) {
 }
 
 func TestContentTypeMiddleware_Valid(t *testing.T) {
+	app := &App{}
 	called := false
-	handler := contentTypeMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := app.contentTypeMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	}))
 
@@ -569,7 +548,8 @@ func TestContentTypeMiddleware_Valid(t *testing.T) {
 }
 
 func TestContentTypeMiddleware_Invalid(t *testing.T) {
-	handler := contentTypeMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	app := &App{}
+	handler := app.contentTypeMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not be called")
 	}))
 
@@ -585,7 +565,8 @@ func TestContentTypeMiddleware_Invalid(t *testing.T) {
 }
 
 func TestCORSHeaders(t *testing.T) {
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	app := &App{}
+	handler := app.corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -599,5 +580,62 @@ func TestCORSHeaders(t *testing.T) {
 	}
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("expected 204 for OPTIONS, got %d", rec.Code)
+	}
+}
+
+// ─── Admin Auth Disabled tests ───
+
+func TestAdminAuthMiddleware_Disabled(t *testing.T) {
+	// Create app with auth disabled
+	app := &App{
+		State: &AppState{
+			cache: make(map[string]Status),
+			stale: make(map[string]Status),
+		},
+		Metrics: NewMetrics(),
+	}
+	app.RequireAdminAuth.Store(false)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	middleware := app.adminAuthMiddleware(handler)
+
+	// Request without auth should succeed
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+
+	middleware.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 when auth is disabled, got %d", rec.Code)
+	}
+}
+
+func TestAdminAuthMiddleware_EnabledWithEmptyKey(t *testing.T) {
+	// Create app with auth enabled but no API key set
+	app := &App{
+		AdminAPIKey: "",
+		State: &AppState{
+			cache: make(map[string]Status),
+			stale: make(map[string]Status),
+		},
+		Metrics: NewMetrics(),
+	}
+	app.RequireAdminAuth.Store(true)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	middleware := app.adminAuthMiddleware(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+
+	middleware.ServeHTTP(rec, req)
+
+	// Should return 403 when auth is enabled but key is empty
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 when auth is enabled but key is empty, got %d", rec.Code)
 	}
 }

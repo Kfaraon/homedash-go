@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,7 +59,6 @@ func NewMetrics() *Metrics {
 // RecordCheck records a service check result
 func (m *Metrics) RecordCheck(name string, success bool, duration time.Duration) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	m.ChecksTotal[name]++
 	if !success {
@@ -77,10 +76,13 @@ func (m *Metrics) RecordCheck(name string, success bool, duration time.Duration)
 	} else {
 		cb.Failures++
 		cb.LastFailure = time.Now()
-		if cb.Failures >= 3 {
+		// If we were in half-open and failed, go back to open
+		if cb.State == CircuitHalfOpen || cb.Failures >= 3 {
 			cb.State = CircuitOpen
 		}
 	}
+
+	m.mu.Unlock()
 }
 
 // getCircuitStateLocked gets or creates circuit state for a service
@@ -100,27 +102,38 @@ func (m *Metrics) getCircuitStateLocked(name string) *CircuitState {
 // (circuit breaker + rate limiting)
 func (m *Metrics) ShouldCheck(name string) bool {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 
 	cb, exists := m.CircuitBreaker[name]
 	if !exists {
+		m.mu.RUnlock()
 		return true
 	}
 
 	// Rate limiting: minimum interval between checks
 	if time.Since(cb.LastCheck) < cb.MinInterval {
+		m.mu.RUnlock()
 		return false
 	}
 
-	// Circuit open — skip check
+	// Circuit open — allow check once every 30 seconds for probing
 	if cb.State == CircuitOpen {
-		// Allow check once every 30 seconds for probing
 		if time.Since(cb.LastFailure) > 30*time.Second {
+			m.mu.RUnlock()
+			// Transition to half-open requires write lock
+			m.mu.Lock()
+			// Re-check after acquiring lock (another goroutine may have changed state)
+			cb2, exists2 := m.CircuitBreaker[name]
+			if exists2 && cb2.State == CircuitOpen && time.Since(cb2.LastFailure) > 30*time.Second {
+				cb2.State = CircuitHalfOpen
+			}
+			m.mu.Unlock()
 			return true
 		}
+		m.mu.RUnlock()
 		return false
 	}
 
+	m.mu.RUnlock()
 	return true
 }
 
@@ -224,37 +237,57 @@ func (m *Metrics) GetPrometheusMetrics() string {
 	// Global counters
 	sb.WriteString("# HELP homedash_config_reloads_total Total number of config reloads\n")
 	sb.WriteString("# TYPE homedash_config_reloads_total counter\n")
-	sb.WriteString(fmt.Sprintf("homedash_config_reloads_total %d\n", atomic.LoadInt64(&m.ConfigReloads)))
+	sb.WriteString("homedash_config_reloads_total ")
+	sb.WriteString(strconv.FormatInt(atomic.LoadInt64(&m.ConfigReloads), 10))
+	sb.WriteByte('\n')
 
 	sb.WriteString("# HELP homedash_cache_hits_total Total number of cache hits\n")
 	sb.WriteString("# TYPE homedash_cache_hits_total counter\n")
-	sb.WriteString(fmt.Sprintf("homedash_cache_hits_total %d\n", atomic.LoadInt64(&m.CacheHits)))
+	sb.WriteString("homedash_cache_hits_total ")
+	sb.WriteString(strconv.FormatInt(atomic.LoadInt64(&m.CacheHits), 10))
+	sb.WriteByte('\n')
 
 	sb.WriteString("# HELP homedash_cache_misses_total Total number of cache misses\n")
 	sb.WriteString("# TYPE homedash_cache_misses_total counter\n")
-	sb.WriteString(fmt.Sprintf("homedash_cache_misses_total %d\n", atomic.LoadInt64(&m.CacheMisses)))
+	sb.WriteString("homedash_cache_misses_total ")
+	sb.WriteString(strconv.FormatInt(atomic.LoadInt64(&m.CacheMisses), 10))
+	sb.WriteByte('\n')
 
 	sb.WriteString("# HELP homedash_active_checks Number of currently active checks\n")
 	sb.WriteString("# TYPE homedash_active_checks gauge\n")
-	sb.WriteString(fmt.Sprintf("homedash_active_checks %d\n", atomic.LoadInt64(&m.ActiveChecks)))
+	sb.WriteString("homedash_active_checks ")
+	sb.WriteString(strconv.FormatInt(atomic.LoadInt64(&m.ActiveChecks), 10))
+	sb.WriteByte('\n')
 
 	// Per-service metrics
 	sb.WriteString("# HELP homedash_checks_total Total number of checks per service\n")
 	sb.WriteString("# TYPE homedash_checks_total counter\n")
 	for name, count := range m.ChecksTotal {
-		sb.WriteString(fmt.Sprintf("homedash_checks_total{service=%q} %d\n", name, count))
+		sb.WriteString("homedash_checks_total{service=\"")
+		sb.WriteString(name)
+		sb.WriteString("\"} ")
+		sb.WriteString(strconv.FormatInt(count, 10))
+		sb.WriteByte('\n')
 	}
 
 	sb.WriteString("# HELP homedash_checks_failed_total Total number of failed checks per service\n")
 	sb.WriteString("# TYPE homedash_checks_failed_total counter\n")
 	for name, count := range m.ChecksFailed {
-		sb.WriteString(fmt.Sprintf("homedash_checks_failed_total{service=%q} %d\n", name, count))
+		sb.WriteString("homedash_checks_failed_total{service=\"")
+		sb.WriteString(name)
+		sb.WriteString("\"} ")
+		sb.WriteString(strconv.FormatInt(count, 10))
+		sb.WriteByte('\n')
 	}
 
 	sb.WriteString("# HELP homedash_check_duration_seconds Last check duration in seconds per service\n")
 	sb.WriteString("# TYPE homedash_check_duration_seconds gauge\n")
 	for name, dur := range m.CheckDuration {
-		sb.WriteString(fmt.Sprintf("homedash_check_duration_seconds{service=%q} %.3f\n", name, dur.Seconds()))
+		sb.WriteString("homedash_check_duration_seconds{service=\"")
+		sb.WriteString(name)
+		sb.WriteString("\"} ")
+		sb.WriteString(strconv.FormatFloat(dur.Seconds(), 'f', 3, 64))
+		sb.WriteByte('\n')
 	}
 
 	// Circuit breaker states
@@ -268,7 +301,11 @@ func (m *Metrics) GetPrometheusMetrics() string {
 		case CircuitHalfOpen:
 			stateVal = 2
 		}
-		sb.WriteString(fmt.Sprintf("homedash_circuit_breaker_state{service=%q} %d\n", name, stateVal))
+		sb.WriteString("homedash_circuit_breaker_state{service=\"")
+		sb.WriteString(name)
+		sb.WriteString("\"} ")
+		sb.WriteString(strconv.Itoa(stateVal))
+		sb.WriteByte('\n')
 	}
 
 	return sb.String()
@@ -281,66 +318,71 @@ type CheckResult struct {
 	Duration time.Duration
 }
 
-// checkServicesInParallel checks all services in parallel with a worker pool
-func checkServicesInParallel(ctx context.Context, groups []Group, metrics *Metrics) map[string]Status {
+// checkServicesInParallel checks all services in parallel with a true worker pool
+func checkServicesInParallel(ctx context.Context, groups []Group, metrics *Metrics, pingTimeout time.Duration) map[string]Status {
 	// Collect all services
-	type serviceWithGroup struct {
-		Group string
-		Svc   Service
+	type serviceTask struct {
+		Svc         Service
+		PingTimeout time.Duration
 	}
 
-	var services []serviceWithGroup
+	var tasks []serviceTask
 	for _, g := range groups {
 		for _, s := range g.Services {
-			services = append(services, serviceWithGroup{Group: g.Name, Svc: s})
+			// Filter by circuit breaker before queuing
+			if metrics.ShouldCheck(s.Name) {
+				tasks = append(tasks, serviceTask{Svc: s, PingTimeout: pingTimeout})
+			}
 		}
 	}
 
-	if len(services) == 0 {
+	if len(tasks) == 0 {
 		return make(map[string]Status)
 	}
 
-	// Worker pool: limit concurrency (builtin min Go 1.21)
-	maxWorkers := len(services)
-	if maxWorkers > 20 {
-		maxWorkers = 20
+	// Worker pool: fixed number of workers reading from a channel
+	const maxWorkers = 20
+	workers := maxWorkers
+	if len(tasks) < workers {
+		workers = len(tasks)
 	}
-	sem := make(chan struct{}, maxWorkers)
 
-	resultCh := make(chan CheckResult, len(services))
+	taskCh := make(chan serviceTask, len(tasks))
+	resultCh := make(chan CheckResult, len(tasks))
 	var wg sync.WaitGroup
 
-	for _, sg := range services {
-		// Check circuit breaker / rate limiting
-		if !metrics.ShouldCheck(sg.Svc.Name) {
-			continue
-		}
+	// Send all tasks to channel
+	for _, t := range tasks {
+		taskCh <- t
+	}
+	close(taskCh)
 
+	// Start workers
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go func(svc Service, grp string) {
+		go func() {
 			defer wg.Done()
+			for task := range taskCh {
+				metrics.AddActiveCheck(1)
 
-			sem <- struct{}{}        // acquire
-			defer func() { <-sem }() // release
+				start := time.Now()
+				st := checkService(ctx, task.Svc, task.PingTimeout)
+				duration := time.Since(start)
 
-			metrics.AddActiveCheck(1)
-			defer metrics.AddActiveCheck(-1)
+				metrics.RecordCheck(task.Svc.Name, st.Available, duration)
 
-			start := time.Now()
-			st := checkService(ctx, svc)
-			duration := time.Since(start)
+				resultCh <- CheckResult{
+					Name:     task.Svc.Name,
+					Status:   st,
+					Duration: duration,
+				}
 
-			metrics.RecordCheck(svc.Name, st.Available, duration)
-
-			resultCh <- CheckResult{
-				Name:     svc.Name,
-				Status:   st,
-				Duration: duration,
+				metrics.AddActiveCheck(-1)
 			}
-		}(sg.Svc, sg.Group)
+		}()
 	}
 
-	// Close channel after all goroutines finish
+	// Close result channel after all workers finish
 	go func() {
 		wg.Wait()
 		close(resultCh)

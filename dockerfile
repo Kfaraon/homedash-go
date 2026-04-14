@@ -1,5 +1,8 @@
 # ========== BUILD STAGE ==========
-FROM golang:1.21-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 # Установка зависимостей для сборки
 RUN apk add --no-cache git ca-certificates
@@ -16,7 +19,8 @@ COPY templates/ ./templates/
 COPY static/ ./static/
 
 # Сборка с оптимизацией
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o homedash .
+# GOOS/GOOS задаются автоматически через --platform
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -ldflags="-s -w" -o homedash .
 
 # ========== RUNTIME STAGE ==========
 FROM alpine:3.20 AS runtime
@@ -33,8 +37,8 @@ COPY --from=builder /app/homedash .
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/static ./static
 
-# Копируем конфиг (может быть переопределен через volume)
-COPY --from=builder /app/config.json .
+# Копируем конфиг напрямую (не из builder, т.к. он там не копируется)
+COPY config.json .
 
 # Создаём непривилегированного пользователя
 RUN addgroup -g 1000 appgroup && \
