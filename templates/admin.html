@@ -7,555 +7,11 @@
     <meta name="color-scheme" content="light dark">
     <title>homedash · admin</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%236c5ce7'/><text x='16' y='22' text-anchor='middle' font-size='18' font-family='system-ui' fill='white'>A</text></svg>">
-    <link rel="stylesheet" href="/static/style.css">
-    <style>
-    html.dark-theme{--bg-primary:#0f0f0f;--bg-secondary:#1a1a1a;--bg-surface:#1a1a1a;--bg-elevated:#242424;--text-primary:#e5e5e5;--text-secondary:#a3a3a3;--text-muted:#666;--border-color:#2a2a2a;--border-hover:#404040;--accent:#8b7cf7;--accent-hover:#a78bfa;--accent-light:rgba(139,124,247,0.12);--success:#34d399;--success-bg:rgba(52,211,153,0.12);--danger:#f87171;--danger-bg:rgba(248,113,113,0.12);--shadow-sm:0 1px 2px rgba(0,0,0,0.2);--shadow-md:0 4px 12px rgba(0,0,0,0.3);--shadow-lg:0 8px 24px rgba(0,0,0,0.4)}
-    </style>
+    <link rel="stylesheet" href="/static/home.css">
+    <link rel="stylesheet" href="/static/admin.css">
     <script>
     if(localStorage.getItem('theme')==='dark')document.documentElement.classList.add('dark-theme');
     </script>
-    <style>
-        /* ==========================================================================
-           Admin-specific styles
-           ========================================================================== */
-
-        /* Admin header */
-        .admin-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 2.5rem;
-            flex-wrap: wrap;
-            gap: 1rem;
-        }
-
-        .admin-header h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
-            letter-spacing: -0.02em;
-            color: var(--text-primary);
-            line-height: 1.3;
-        }
-
-        .admin-header h1 span {
-            color: var(--text-muted);
-            font-weight: 400;
-        }
-
-        .admin-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .back-link {
-            color: var(--text-secondary);
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            transition: color var(--transition);
-            font-size: 0.9rem;
-        }
-
-        .back-link:hover {
-            color: var(--accent);
-        }
-
-        /* Add group section */
-        .add-group-section {
-            background: var(--bg-surface);
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-lg);
-            box-shadow: var(--shadow-sm);
-            padding: 1.25rem 1.5rem;
-            margin-bottom: 2rem;
-        }
-
-        .add-group-section h3 {
-            margin-bottom: 1rem;
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            letter-spacing: -0.01em;
-        }
-
-        /* Forms */
-        .form-row {
-            display: flex;
-            gap: 0.75rem;
-            align-items: flex-end;
-            flex-wrap: wrap;
-        }
-
-        .form-group {
-            flex: 1;
-            min-width: 200px;
-        }
-
-        .form-group label {
-            display: block;
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.35rem;
-            font-weight: 500;
-        }
-
-        .form-group input,
-        .form-group select {
-            width: 100%;
-            padding: 0.6rem 0.75rem;
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-sm);
-            font-size: 0.9rem;
-            background: var(--bg-secondary);
-            color: var(--text-primary);
-            transition: border-color var(--transition), box-shadow var(--transition);
-        }
-
-        .form-group input:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px var(--accent-light);
-        }
-
-        .form-group input::placeholder {
-            color: var(--text-muted);
-        }
-
-        /* Checkbox */
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .checkbox-group input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            accent-color: var(--accent);
-            cursor: pointer;
-        }
-
-        .checkbox-group label {
-            cursor: pointer;
-            margin-bottom: 0;
-        }
-
-        /* Buttons */
-        .btn {
-            padding: 0.6rem 1.25rem;
-            border: none;
-            border-radius: var(--radius-sm);
-            font-size: 0.9rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all var(--transition);
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.35rem;
-            white-space: nowrap;
-        }
-
-        .btn-primary {
-            background: var(--accent);
-            color: var(--text-inverse);
-        }
-
-        .btn-primary:hover {
-            background: var(--accent-hover);
-            box-shadow: var(--shadow-sm);
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #2f855a;
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #c53030;
-        }
-
-        .btn-ghost {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary);
-        }
-
-        .btn-ghost:hover {
-            background: var(--bg-elevated);
-            border-color: var(--border-hover);
-            color: var(--text-primary);
-        }
-
-        /* Add Group Button (styled as group header) */
-        .add-group-section-btn {
-            cursor: pointer;
-            transition: box-shadow var(--transition);
-        }
-
-        .add-group-section-btn:hover {
-            box-shadow: var(--shadow-md);
-        }
-
-        .add-group-section-btn h2 {
-            opacity: 0.6;
-            transition: opacity var(--transition);
-        }
-
-        .add-group-section-btn:hover h2 {
-            opacity: 1;
-        }
-
-        /* Group section */
-        .group-section {
-            background: var(--bg-surface);
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-lg);
-            box-shadow: var(--shadow-sm);
-            margin-bottom: 2rem;
-            overflow: hidden;
-            transition: border-color var(--transition), box-shadow var(--transition);
-        }
-
-        .group-section:hover {
-            box-shadow: var(--shadow-md);
-        }
-
-        .group-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0.75rem 1.25rem;
-            border-bottom: 1px solid var(--border-color);
-            background: var(--accent-light);
-            flex-wrap: wrap;
-            gap: 0.5rem;
-        }
-
-        .group-title-row {
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
-        }
-
-        .group-title-row h2 {
-            margin: 0;
-        }
-
-        /* Add service row */
-        .add-service-row {
-            cursor: pointer;
-            text-align: center;
-            color: var(--text-muted);
-            font-size: 0.85rem;
-            transition: all var(--transition);
-        }
-
-        .add-service-row td {
-            padding: 0.75rem 1rem;
-        }
-
-        .add-service-row:hover {
-            background: var(--accent-light) !important;
-            color: var(--accent);
-        }
-
-        .add-service-row svg {
-            vertical-align: middle;
-            margin-right: 4px;
-        }
-
-        .group-header h2 {
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--accent);
-            letter-spacing: -0.01em;
-            font-family:
-                'JetBrains Mono',
-                'Fira Code',
-                'SF Mono',
-                Consolas,
-                monospace;
-            -webkit-font-smoothing: auto;
-        }
-
-        .group-header h2::before {
-            content: '';
-            display: inline-block;
-            width: 3px;
-            height: 1em;
-            background: var(--accent);
-            border-radius: 2px;
-            margin-right: 0.5rem;
-            vertical-align: middle;
-        }
-
-        /* Services table */
-        .services-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .services-table th {
-            text-align: left;
-            padding: 0.75rem 1rem;
-            background: var(--bg-primary);
-            font-weight: 600;
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            border-bottom: 1px solid var(--border-color);
-            font-family:
-                'JetBrains Mono',
-                'Fira Code',
-                'SF Mono',
-                Consolas,
-                monospace;
-            -webkit-font-smoothing: auto;
-        }
-
-        .services-table td {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid var(--border-color);
-            font-size: 0.9rem;
-            color: var(--text-primary);
-        }
-
-        .services-table tr:last-child td {
-            border-bottom: none;
-        }
-
-        .services-table tr:hover {
-            background: var(--accent-light);
-        }
-
-        .service-name {
-            font-weight: 600;
-            color: var(--text-primary);
-        }
-
-        .service-url,
-        .service-ip {
-            color: var(--text-secondary);
-            font-family:
-                'JetBrains Mono',
-                'Fira Code',
-                'SF Mono',
-                Consolas,
-                monospace;
-            font-size: 0.85rem;
-            -webkit-font-smoothing: auto;
-        }
-
-        /* Action buttons container */
-        .action-btns {
-            display: flex;
-            gap: 0.35rem;
-            align-items: center;
-        }
-
-        /* Drag handle */
-        .drag-handle {
-            cursor: grab;
-            text-align: center;
-            vertical-align: middle;
-            color: var(--text-muted);
-            transition: color var(--transition);
-        }
-
-        .drag-handle:hover {
-            color: var(--text-primary);
-        }
-
-        .drag-handle svg {
-            display: block;
-            margin: 0 auto;
-        }
-
-        /* Drag states */
-        tr[draggable="true"] {
-            cursor: grab;
-        }
-
-        tr.dragging {
-            opacity: 0.4;
-            background: var(--accent-light) !important;
-        }
-
-        tr.drag-over {
-            border-top: 2px solid var(--accent) !important;
-        }
-
-        tr.drag-over td {
-            position: relative;
-        }
-
-        tr.drag-over::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            right: 0;
-            top: -2px;
-            height: 2px;
-            background: var(--accent);
-            z-index: 1;
-        }
-
-        .action-btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 30px;
-            height: 30px;
-            padding: 0;
-            border: 1px solid var(--border-color);
-            background: var(--bg-surface);
-            border-radius: var(--radius-sm);
-            cursor: pointer;
-            transition: all var(--transition);
-            color: var(--text-secondary);
-        }
-
-        .action-btn:hover {
-            background: var(--accent);
-            color: white;
-            border-color: var(--accent);
-        }
-
-        .action-btn.danger {
-            color: var(--danger);
-        }
-
-        .action-btn.danger:hover {
-            background: var(--danger);
-            border-color: var(--danger);
-            color: white;
-        }
-
-        /* Modal */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-            align-items: center;
-            justify-content: center;
-            backdrop-filter: blur(4px);
-        }
-
-        .modal-overlay.active {
-            display: flex;
-        }
-
-        .modal {
-            background: var(--bg-surface);
-            border-radius: var(--radius-lg);
-            box-shadow: var(--shadow-lg);
-            padding: 1.5rem;
-            max-width: 500px;
-            width: 90%;
-            max-height: 90vh;
-            overflow-y: auto;
-            border: 1px solid var(--border-color);
-        }
-
-        .modal h3 {
-            margin-bottom: 1.25rem;
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            letter-spacing: -0.01em;
-        }
-
-        .modal .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .modal-actions {
-            display: flex;
-            gap: 0.75rem;
-            justify-content: flex-end;
-            margin-top: 1.5rem;
-        }
-
-        /* Toast */
-        .toast {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            padding: 0.75rem 1.25rem;
-            border-radius: var(--radius-md);
-            color: white;
-            font-weight: 500;
-            box-shadow: var(--shadow-lg);
-            transform: translateY(100px);
-            opacity: 0;
-            transition: all 0.3s ease;
-            z-index: 2000;
-            font-size: 0.9rem;
-        }
-
-        .toast.success {
-            background: var(--success);
-        }
-
-        .toast.error {
-            background: var(--danger);
-        }
-
-        .toast.show {
-            transform: translateY(0);
-            opacity: 1;
-        }
-
-        /* Empty state */
-        .empty-state {
-            text-align: center;
-            padding: 2rem 1rem;
-            color: var(--text-muted);
-            font-size: 0.9rem;
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .services-table {
-                font-size: 0.8rem;
-            }
-
-            .services-table th,
-            .services-table td {
-                padding: 0.5rem 0.75rem;
-            }
-
-            .form-row {
-                flex-direction: column;
-            }
-
-            .form-group {
-                min-width: 100%;
-            }
-
-            .group-header {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-        }
-    </style>
 </head>
 <body>
     <div class="container">
@@ -581,8 +37,8 @@
         <div id="groupsContainer">
             {{range .Groups}}
             {{$groupName := .Name}}
-            <div class="group-section" data-group-name="{{.Name}}">
-                <div class="group-header">
+            <div class="admin-group-section" data-group-name="{{.Name}}">
+                <div class="admin-group-header">
                     <div class="group-title-row">
                         <h2>{{.Name}}</h2>
                         <button class="action-btn" onclick="openRenameGroupModal({{.Name | js}})" title="Переименовать группу">
@@ -593,59 +49,54 @@
                         </button>
                     </div>
                 </div>
-                <table class="services-table">
-                    <thead>
-                        <tr>
-                            <th style="width:40px"></th>
-                            <th>Название</th>
-                            <th>URL</th>
-                            <th>IP</th>
-                            <th>Verify SSL</th>
-                            <th>Действия</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{range .Services}}
-                        <tr draggable="true" data-service-name="{{.Name}}" data-group-name="{{$groupName}}" ondblclick="editService(this.dataset.groupName, this.dataset.serviceName)">
-                            <td class="drag-handle" title="Перетащите для изменения порядка">
+                <div class="services-list">
+                    <div class="services-header">
+                        <div class="col-drag" style="width:40px"></div>
+                        <div class="col-name">Название</div>
+                        <div class="col-url">URL</div>
+                        <div class="col-ip">IP</div>
+                        <div class="col-ssl">Verify SSL</div>
+                        <div class="col-actions">Действия</div>
+                    </div>
+                    {{range .Services}}
+                    <div class="service-row" data-service-name="{{.Name}}" data-group-name="{{$groupName}}" ondblclick="editService(this.dataset.groupName, this.dataset.serviceName)">
+                        <div class="col-drag drag-handle">
+                            <div class="drag-grip" draggable="true" title="Перетащите для изменения порядка">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
-                            </td>
-                            <td class="service-name">{{.Name}}</td>
-                            <td class="service-url">{{if .URL}}{{.URL}}{{else}}—{{end}}</td>
-                            <td class="service-ip">{{if .IP}}{{.IP}}{{else}}—{{end}}</td>
-                            <td>{{if .VerifySSL}}✅{{else}}—{{end}}</td>
-                            <td>
-                                <div class="action-btns">
-                                    <button class="action-btn" onclick="editService({{$groupName | js}}, {{.Name | js}})" title="Редактировать">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                    </button>
-                                    <button class="action-btn" onclick="moveService({{$groupName | js}}, {{.Name | js}})" title="Переместить">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
-                                    </button>
-                                    <button class="action-btn danger" onclick="deleteService({{$groupName | js}}, {{.Name | js}})" title="Удалить">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                        {{end}}
-                        <tr class="add-service-row" onclick="addServiceToGroup({{$groupName | js}})">
-                            <td colspan="6">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                Добавить сервис
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+                            </div>
+                        </div>
+                        <div class="col-name service-name">{{.Name}}</div>
+                        <div class="col-url service-url">{{if .URL}}{{.URL}}{{else}}—{{end}}</div>
+                        <div class="col-ip service-ip">{{if .IP}}{{.IP}}{{else}}—{{end}}</div>
+                        <div class="col-ssl">{{if .VerifySSL}}✅{{else}}—{{end}}</div>
+                        <div class="col-actions">
+                            <div class="action-btns">
+                                <button class="action-btn" onclick="editService({{$groupName | js}}, {{.Name | js}})" title="Редактировать">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                                <button class="action-btn" onclick="moveService({{$groupName | js}}, {{.Name | js}})" title="Переместить">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
+                                </button>
+                                <button class="action-btn danger" onclick="deleteService({{$groupName | js}}, {{.Name | js}})" title="Удалить">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {{end}}
+                    <div class="add-service-row" onclick="addServiceToGroup({{$groupName | js}})">
+                        <div class="add-service-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        </div>
+                    </div>
+                </div>
             </div>
             {{end}}
         </div>
 
         <!-- Add Group Button -->
-        <div class="group-section add-group-section-btn" onclick="openAddGroupModal()">
-            <div class="group-header">
-                <h2>+ Добавить группу</h2>
-            </div>
+        <div class="admin-group-section add-group-section-btn group-section-btn" onclick="openAddGroupModal()">
+            <h2>+ Добавить группу</h2>
         </div>
 
         <!-- ====== Footer ====== -->
@@ -668,10 +119,12 @@
             <div class="form-group">
                 <label for="modalServiceURL">URL (опционально)</label>
                 <input type="text" id="modalServiceURL" placeholder="https://example.com">
+                <div class="field-error" id="modalServiceURLError"></div>
             </div>
             <div class="form-group">
                 <label for="modalServiceIP">IP (опционально)</label>
                 <input type="text" id="modalServiceIP" placeholder="192.168.1.1">
+                <div class="field-error" id="modalServiceIPError"></div>
             </div>
             <div class="form-group checkbox-group">
                 <input type="checkbox" id="modalServiceSSL">
@@ -814,6 +267,89 @@
             return res.json();
         }
 
+        /* ── Validation helpers ── */
+        function isValidURL(str) {
+            if (!str) return { valid: true };
+
+            // Проверка на длину
+            if (str.length > 2048) {
+                return { valid: false, error: 'URL слишком длинный (макс. 2048 символов)' };
+            }
+
+            // Проверка на обратные слеши
+            if (str.includes('\\')) {
+                return { valid: false, error: 'URL не должен содержать обратные слеши (\\)' };
+            }
+
+            // Проверка на пробелы
+            if (/\s/.test(str)) {
+                return { valid: false, error: 'URL не должен содержать пробелы' };
+            }
+
+            // Проверка что начинается с http:// или https://
+            if (!str.startsWith('http://') && !str.startsWith('https://')) {
+                return { valid: false, error: 'URL должен начинаться с http:// или https://' };
+            }
+
+            // Проверка на пустой хост
+            try {
+                const url = new URL(str);
+                if (!url.hostname || url.hostname.length === 0) {
+                    return { valid: false, error: 'Укажите домен или IP адрес' };
+                }
+                if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+                    return { valid: false, error: 'Поддерживаются только http:// и https://' };
+                }
+                return { valid: true };
+            } catch {
+                return { valid: false, error: 'Введите корректный URL' };
+            }
+        }
+
+        function isValidIP(str) {
+            if (!str) return true; // IP is optional
+            // Проверяем IPv4 или IPv6
+            const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+            if (ipv4Pattern.test(str)) {
+                // Проверяем что каждая часть <= 255
+                const parts = str.split('.');
+                return parts.every(part => {
+                    const num = parseInt(part, 10);
+                    return num >= 0 && num <= 255;
+                });
+            }
+            // Простая проверка IPv6 (наличие colon)
+            if (str.includes(':')) {
+                // Браузерный URL API не проверяет IP, поэтому используем простую проверку
+                try {
+                    new URL(`http://[${str}]`);
+                    return true;
+                } catch {
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        function showFieldError(inputId, errorId, message) {
+            const input = document.getElementById(inputId);
+            const error = document.getElementById(errorId);
+            if (input) input.classList.add('input-error');
+            if (error) error.textContent = message;
+        }
+
+        function clearFieldError(inputId, errorId) {
+            const input = document.getElementById(inputId);
+            const error = document.getElementById(errorId);
+            if (input) input.classList.remove('input-error');
+            if (error) error.textContent = '';
+        }
+
+        function clearAllServiceErrors() {
+            clearFieldError('modalServiceURL', 'modalServiceURLError');
+            clearFieldError('modalServiceIP', 'modalServiceIPError');
+        }
+
         /* ── Add group ── */
         window.openAddGroupModal = function() {
             document.getElementById('newGroupName').value = '';
@@ -908,6 +444,7 @@
             document.getElementById('modalServiceURL').value = '';
             document.getElementById('modalServiceIP').value = '';
             document.getElementById('modalServiceSSL').checked = false;
+            clearAllServiceErrors();
             document.getElementById('serviceModal').classList.add('active');
         };
 
@@ -933,6 +470,7 @@
             document.getElementById('modalServiceURL').value = service.url || '';
             document.getElementById('modalServiceIP').value = service.ip || '';
             document.getElementById('modalServiceSSL').checked = service.verify_ssl || false;
+            clearAllServiceErrors();
             document.getElementById('serviceModal').classList.add('active');
         };
 
@@ -947,13 +485,38 @@
                 verify_ssl: document.getElementById('modalServiceSSL').checked
             };
 
+            // Очищаем все ошибки
+            clearAllServiceErrors();
+
+            // Валидация названия
             if (!service.name) {
                 showToast('Введите название сервиса', 'error');
                 return;
             }
 
+            // Валидация URL или IP
             if (!service.url && !service.ip) {
                 showToast('Укажите URL или IP', 'error');
+                return;
+            }
+
+            // Валидация URL
+            let hasError = false;
+            if (service.url) {
+                const urlCheck = isValidURL(service.url);
+                if (!urlCheck.valid) {
+                    showFieldError('modalServiceURL', 'modalServiceURLError', urlCheck.error);
+                    hasError = true;
+                }
+            }
+
+            // Валидация IP
+            if (service.ip && !isValidIP(service.ip)) {
+                showFieldError('modalServiceIP', 'modalServiceIPError', 'Введите корректный IPv4 или IPv6 адрес');
+                hasError = true;
+            }
+
+            if (hasError) {
                 return;
             }
 
@@ -1100,78 +663,121 @@
             if (e.target === this) closeDeleteModal();
         });
 
+        /* ── Real-time validation ── */
+        document.getElementById('modalServiceURL').addEventListener('input', function() {
+            const val = this.value.trim();
+            if (!val) {
+                clearFieldError('modalServiceURL', 'modalServiceURLError');
+                return;
+            }
+            const check = isValidURL(val);
+            if (check.valid) {
+                clearFieldError('modalServiceURL', 'modalServiceURLError');
+            } else {
+                showFieldError('modalServiceURL', 'modalServiceURLError', check.error);
+            }
+        });
+
+        document.getElementById('modalServiceIP').addEventListener('input', function() {
+            const val = this.value.trim();
+            if (!val) {
+                clearFieldError('modalServiceIP', 'modalServiceIPError');
+                return;
+            }
+            if (!isValidIP(val)) {
+                showFieldError('modalServiceIP', 'modalServiceIPError', 'Введите корректный IPv4 или IPv6 адрес');
+            } else {
+                clearFieldError('modalServiceIP', 'modalServiceIPError');
+            }
+        });
+
         /* ── Drag & Drop ── */
         let draggedRow = null;
 
-        document.querySelectorAll('tbody').forEach(tbody => {
-            tbody.addEventListener('dragstart', function(e) {
-                const row = e.target.closest('tr[draggable="true"]');
-                if (!row) return;
-                draggedRow = row;
-                row.classList.add('dragging');
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', '');
-            });
+        document.addEventListener('dragstart', function(e) {
+            const grip = e.target.closest('.drag-grip[draggable="true"]');
+            if (!grip) return;
 
-            tbody.addEventListener('dragend', function(e) {
-                const row = e.target.closest('tr[draggable="true"]');
-                if (!row) return;
-                row.classList.remove('dragging');
-                document.querySelectorAll('.drag-over').forEach(r => r.classList.remove('drag-over'));
-                draggedRow = null;
-            });
+            const row = grip.closest('.service-row');
+            if (!row) return;
 
-            tbody.addEventListener('dragover', function(e) {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                const row = e.target.closest('tr[draggable="true"]');
-                if (!row || row === draggedRow) return;
-                document.querySelectorAll('.drag-over').forEach(r => r.classList.remove('drag-over'));
-                row.classList.add('drag-over');
-            });
+            draggedRow = row;
+            row.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', row.dataset.serviceName);
+        });
 
-            tbody.addEventListener('dragleave', function(e) {
-                const row = e.target.closest('tr[draggable="true"]');
-                if (row) row.classList.remove('drag-over');
-            });
+        document.addEventListener('dragend', function() {
+            if (draggedRow) {
+                draggedRow.classList.remove('dragging');
+            }
+            document.querySelectorAll('.drag-over').forEach(r => r.classList.remove('drag-over'));
+            draggedRow = null;
+        });
 
-            tbody.addEventListener('drop', async function(e) {
-                e.preventDefault();
-                const targetRow = e.target.closest('tr[draggable="true"]');
-                if (!targetRow || targetRow === draggedRow) return;
+        document.addEventListener('dragover', function(e) {
+            if (!draggedRow) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
 
-                const tbody = this;
-                const rows = [...tbody.querySelectorAll('tr[draggable="true"]')];
-                const fromIdx = rows.indexOf(draggedRow);
-                const toIdx = rows.indexOf(targetRow);
+            const targetRow = e.target.closest('.service-row');
+            if (!targetRow || targetRow === draggedRow || !targetRow.dataset.serviceName) return;
 
-                if (fromIdx === -1 || toIdx === -1) return;
+            // Разрешаем drop только внутри той же группы
+            if (targetRow.dataset.groupName !== draggedRow.dataset.groupName) return;
 
-                // Перемещаем строку в DOM
-                if (fromIdx < toIdx) {
-                    tbody.insertBefore(draggedRow, targetRow.nextSibling);
-                } else {
-                    tbody.insertBefore(draggedRow, targetRow);
-                }
+            document.querySelectorAll('.drag-over').forEach(r => r.classList.remove('drag-over'));
+            targetRow.classList.add('drag-over');
+        });
 
-                targetRow.classList.remove('drag-over');
+        document.addEventListener('dragleave', function(e) {
+            const targetRow = e.target.closest('.service-row');
+            if (targetRow) targetRow.classList.remove('drag-over');
+        });
 
-                // Собираем новый порядок
-                const groupName = draggedRow.closest('.group-section').dataset.groupName;
-                const newOrder = [...tbody.querySelectorAll('tr[draggable="true"]')].map(r => r.dataset.serviceName);
+        document.addEventListener('drop', async function(e) {
+            if (!draggedRow) return;
+            e.preventDefault();
 
-                // Сохраняем на сервере
-                try {
-                    await api('/api/admin/service/reorder', 'POST', {
-                        group_name: groupName,
-                        services: newOrder
-                    });
-                } catch (err) {
-                    showToast('Ошибка сохранения порядка: ' + err.message, 'error');
-                    // Откат — перезагрузим
-                    setTimeout(() => location.reload(), 1000);
-                }
-            });
+            const targetRow = e.target.closest('.service-row');
+            if (!targetRow || targetRow === draggedRow || !targetRow.dataset.serviceName) return;
+
+            // Только внутри одной группы
+            if (targetRow.dataset.groupName !== draggedRow.dataset.groupName) return;
+
+            const container = draggedRow.closest('.services-list');
+            if (!container) return;
+
+            const rows = [...container.querySelectorAll('.service-row')];
+            const fromIdx = rows.indexOf(draggedRow);
+            const toIdx = rows.indexOf(targetRow);
+
+            if (fromIdx === -1 || toIdx === -1) return;
+
+            // Перемещаем строку в DOM
+            if (fromIdx < toIdx) {
+                container.insertBefore(draggedRow, targetRow.nextSibling);
+            } else {
+                container.insertBefore(draggedRow, targetRow);
+            }
+
+            targetRow.classList.remove('drag-over');
+
+            // Собираем новый порядок
+            const groupName = draggedRow.dataset.groupName;
+            const newOrder = [...container.querySelectorAll('.service-row')].map(r => r.dataset.serviceName);
+
+            // Сохраняем на сервере
+            try {
+                await api('/api/admin/service/reorder', 'POST', {
+                    group_name: groupName,
+                    services: newOrder
+                });
+                showToast('Порядок обновлён', 'success');
+            } catch (err) {
+                showToast('Ошибка сохранения порядка: ' + err.message, 'error');
+                setTimeout(() => location.reload(), 1000);
+            }
         });
 
         /* ── Keyboard shortcuts ── */
