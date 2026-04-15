@@ -83,7 +83,7 @@
 
         <!-- ====== Footer ====== -->
         <footer class="footer">
-            <span>© homedash · adaptive monitoring</span>
+            <span id="wan-ip" class="wan-ip" title="Ваш внешний IP-адрес">wan адрес: загрузка...</span>
         </footer>
 
     </div>
@@ -187,6 +187,30 @@
         window.addEventListener('beforeunload', () => {
             if (pollTimer) clearTimeout(pollTimer);
         });
+
+        /* ── WAN IP ── */
+        async function fetchWanIp() {
+            try {
+                const res = await fetch('/api/myip', { signal: AbortSignal.timeout(5000) });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const ip = await res.text();
+                const el = document.getElementById('wan-ip');
+                if (el) {
+                    el.textContent = `wan адрес: ${ip.trim()}`;
+                }
+            } catch (err) {
+                console.warn('[homedash] wan ip fetch error:', err);
+                const el = document.getElementById('wan-ip');
+                if (el) {
+                    el.textContent = 'wan адрес: недоступен';
+                }
+            }
+        }
+
+        // Fetch WAN IP after page load
+        fetchWanIp();
+        // Refresh WAN IP every 5 minutes
+        setInterval(fetchWanIp, 5 * 60 * 1000);
     })();
     </script>
 </body>
