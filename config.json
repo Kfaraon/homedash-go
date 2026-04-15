@@ -10,6 +10,12 @@
           "verify_ssl": false
         },
         {
+          "name": "GitHub",
+          "url": "https://github.com",
+          "ip": "",
+          "verify_ssl": false
+        },
+        {
           "name": "Spotify",
           "url": "https://spotify.com",
           "ip": "",
@@ -22,14 +28,14 @@
           "verify_ssl": false
         },
         {
-          "name": "Cloudflare",
-          "url": "https://cloudflare.com",
+          "name": "Telegram",
+          "url": "https://telegram.org",
           "ip": "",
           "verify_ssl": false
         },
         {
-          "name": "Telegram",
-          "url": "https://telegram.org",
+          "name": "Cloudflare",
+          "url": "https://cloudflare.com",
           "ip": "",
           "verify_ssl": false
         },
@@ -42,12 +48,6 @@
         {
           "name": "Discord",
           "url": "https://discord.com",
-          "ip": "",
-          "verify_ssl": false
-        },
-        {
-          "name": "GitHub",
-          "url": "https://github.com",
           "ip": "",
           "verify_ssl": false
         }

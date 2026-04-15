@@ -1,10 +1,31 @@
 # Binaries
+homedash
+homedash.exe
 *.exe
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # IDE
-.vscode/settings.json
+.vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# Env
+.env.local
+
+# Temp config
+*.tmp
+.config-*.tmp
+
+# Coverage
+coverage.out
+coverage.html
+
+# Profiling
+*.prof
+*.pprof

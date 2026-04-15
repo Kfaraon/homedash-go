@@ -1,0 +1,53 @@
+# homedash-go — IDE Rules
+
+## Project Type
+Go 1.21 backend + HTML/CSS/JS frontend
+Single dependency: fsnotify (file watching)
+
+## Code Style
+- Use `slog` for logging (not `log` or `fmt`)
+- Exported: `CamelCase`, unexported: `camelCase`
+- Early returns, no nested if-else
+- `RLock` for reads, `Lock` for writes, always `defer Unlock`
+- All long operations accept `context.Context`
+- No global state (except `adminRateLimiter`)
+- Thread-safe: `sync.RWMutex` for all state operations
+
+## Testing
+- Table-driven tests where possible
+- Tests in `*_test.go` files
+- Run: `go test ./...`
+
+## File Structure
+- `main.go` — entry point
+- `app.go` — DI, routing, middleware, config watcher
+- `handlers.go` — HTTP handlers
+- `checks.go` — service health checks
+- `config.go` — config management
+- `metrics.go` — metrics, circuit breaker
+- `icons.go` — icon mapping
+- `types.go` — data structures
+- `templates/` — HTML templates
+- `static/` — CSS/JS assets
+
+## Important Notes
+- Config hot-reload via fsnotify with 500ms debounce
+- Circuit breaker: 3 failures → open → probe after 30s
+- Worker pool: 20 concurrent workers
+- Cache: 3s TTL + stale-while-revalidate (15s max)
+- Rate limiter: 20 burst, 10 requests/second for admin
+
+## Docker
+- Multi-stage build (alpine)
+- Non-privileged user (UID 1000)
+- Healthcheck: wget to /health
+- Port: 5000 (configurable via HOMEDASH_PORT)
+
+## Common Commands
+```bash
+go run main.go          # Run locally
+go build -o homedash .  # Build
+go test ./...           # Run tests
+golangci-lint run       # Lint (if installed)
+go vet ./...            # Vet
+```
