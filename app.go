@@ -31,6 +31,12 @@ type App struct {
 	RequireAdminAuth atomic.Bool // thread-safe, no data race
 	AllowedOrigins   string
 
+	// IP settings
+	IPProviders    []string      // fallback list
+	IPCacheTTL     time.Duration // cache duration
+	IPCache        *IPCache
+	IPCacheMu      sync.RWMutex
+	
 	// State
 	State *AppState
 
@@ -48,11 +54,6 @@ type App struct {
 	// Reload mutex to prevent concurrent reloads
 	reloadMu sync.Mutex
 
-	// IP settings
-	IPProviders    []string      // fallback list
-	IPCacheTTL     time.Duration // cache duration
-	IPCache        *IPCache
-	IPCacheMu      sync.RWMutex
 }
 
 // AppState holds runtime state with thread-safe access
