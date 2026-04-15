@@ -404,6 +404,20 @@ body {
   margin-top: auto;
   padding-top: 2rem;
   border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+/* WAN IP */
+.wan-ip {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  opacity: 0.8;
+  white-space: nowrap;
 }
 
 /* ==========================================================================
