@@ -114,40 +114,118 @@ func (app *App) ServeHealth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ServeMyIP — returns public IP address
+// ServeMyIP — returns cached or fresh public IP address
 func (app *App) ServeMyIP(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+    // Check cache first
+    if cached := app.getCachedIP(); cached != "" {
+        w.Header().Set("Content-Type", "text/plain")
+        w.Header().Set("X-IP-Source", "cache")
+        w.Write([]byte(cached))
+        return
+    }
 
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.ipify.org", nil)
-	if err != nil {
-		slog.Debug("Failed to create myip request", "error", err)
-		http.Error(w, "Failed to determine IP", http.StatusBadGateway)
-		return
-	}
+    // Fetch fresh IP with fallback providers
+    ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+    defer cancel()
 
-	resp, err := getHTTPClient(true).Do(req)
-	if err != nil {
-		slog.Debug("Failed to fetch public IP", "error", err)
-		http.Error(w, "Failed to determine IP", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
+    ip, ipType, provider := app.fetchPublicIP(ctx)
+    if ip == "" {
+        app.Metrics.IncrementIPFetchErrors()
+        http.Error(w, "Failed to determine public IP", http.StatusBadGateway)
+        return
+    }
 
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "External service unavailable", http.StatusBadGateway)
-		return
-	}
+    // Update cache
+    app.updateIPCache(ip, ipType, provider)
+    app.Metrics.IncrementIPFetches()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
-	if err != nil {
-		http.Error(w, "Failed to read response", http.StatusBadGateway)
-		return
-	}
+    w.Header().Set("Content-Type", "text/plain")
+    w.Header().Set("X-IP-Source", "fresh")
+    w.Header().Set("X-IP-Provider", provider)
+    w.Write([]byte(ip))
+}
 
-	ip := strings.TrimSpace(string(body))
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(ip))
+// getCachedIP returns cached IP if still valid
+func (app *App) getCachedIP() string {
+    app.IPCacheMu.RLock()
+    defer app.IPCacheMu.RUnlock()
+    
+    if app.IPCache.IP != "" && time.Since(app.IPCache.FetchedAt) < app.IPCacheTTL {
+        return app.IPCache.IP
+    }
+    return ""
+}
+
+// updateIPCache thread-safely updates the cache
+func (app *App) updateIPCache(ip, ipType, provider string) {
+    app.IPCacheMu.Lock()
+    defer app.IPCacheMu.Unlock()
+    
+    app.IPCache = &IPCache{
+        IP:        ip,
+        Type:      ipType,
+        Provider:  provider,
+        FetchedAt: time.Now(),
+    }
+}
+
+// fetchPublicIP tries providers in order until one succeeds
+func (app *App) fetchPublicIP(ctx context.Context) (ip, ipType, provider string) {
+    client := getHTTPClient(true)
+    
+    // Переименовали переменную цикла: url → providerURL
+    for _, providerURL := range app.IPProviders {
+        select {
+        case <-ctx.Done():
+            return "", "", ""
+        default:
+        }
+
+        req, err := http.NewRequestWithContext(ctx, "GET", providerURL, nil)
+        if err != nil {
+            slog.Debug("Failed to create IP request", "provider", providerURL, "error", err)
+            continue
+        }
+        req.Header.Set("User-Agent", "homedash-go/1.0")
+        req.Header.Set("Accept", "text/plain")
+
+        resp, err := client.Do(req)
+        if err != nil {
+            slog.Debug("IP provider failed", "provider", providerURL, "error", err)
+            continue
+        }
+
+        body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+        resp.Body.Close()
+        
+        if err != nil || resp.StatusCode != http.StatusOK {
+            continue
+        }
+
+        ip = strings.TrimSpace(string(body))
+        if net.ParseIP(ip) == nil {
+            continue
+        }
+
+        // Detect IP type
+        if strings.Contains(ip, ":") {
+            ipType = "ipv6"
+        } else {
+            ipType = "ipv4"
+        }
+        
+        // Теперь url.Parse работает корректно — это обращение к пакету
+        if u, err := url.Parse(providerURL); err == nil {
+            provider = u.Host
+        } else {
+            provider = providerURL
+        }
+        
+        slog.Debug("Public IP fetched", "ip", ip, "type", ipType, "provider", provider)
+        return ip, ipType, provider
+    }
+    
+    return "", "", ""
 }
 
 // ServeMetrics — handler for metrics (JSON format for frontend)

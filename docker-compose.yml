@@ -18,6 +18,8 @@ services:
       - PING_TIMEOUT=1s
       - TZ=${TZ:-Europe/Moscow}
       - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+      - IP_PROVIDERS=https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip,https://ident.me
+      - IP_CACHE_TTL=10m
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/health"]

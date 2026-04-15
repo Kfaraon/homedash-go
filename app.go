@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -46,6 +47,12 @@ type App struct {
 
 	// Reload mutex to prevent concurrent reloads
 	reloadMu sync.Mutex
+
+	// IP settings
+	IPProviders    []string      // fallback list
+	IPCacheTTL     time.Duration // cache duration
+	IPCache        *IPCache
+	IPCacheMu      sync.RWMutex
 }
 
 // AppState holds runtime state with thread-safe access
@@ -78,6 +85,15 @@ func NewApp() (*App, error) {
 		Done:    make(chan struct{}),
 	}
 	app.RequireAdminAuth.Store(adminAPIKey != "")
+
+	// IP providers config
+	providersEnv := getEnv("IP_PROVIDERS", "https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip")
+	app.IPProviders = strings.Split(providersEnv, ",")
+	for i := range app.IPProviders {
+    	app.IPProviders[i] = strings.TrimSpace(app.IPProviders[i])
+	}
+	app.IPCacheTTL = getDurationEnv("IP_CACHE_TTL", 10*time.Minute)
+	app.IPCache = &IPCache{}
 
 	// Load and validate config (single file read)
 	cfg, err := loadConfig(app.ConfigFile)

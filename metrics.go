@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,16 @@ type Metrics struct {
 
 	// Circuit breaker data
 	CircuitBreaker map[string]*CircuitState
+    ipFetches      atomic.Int64
+    ipFetchErrors  atomic.Int64
+}
+
+func (m *Metrics) IncrementIPFetches() {
+    m.ipFetches.Add(1)
+}
+
+func (m *Metrics) IncrementIPFetchErrors() {
+    m.ipFetchErrors.Add(1)
 }
 
 // CircuitState stores circuit breaker state for a service
@@ -209,6 +220,8 @@ func (m *Metrics) GetSnapshot() map[string]any {
 		"active_checks":    atomic.LoadInt64(&m.ActiveChecks),
 		"circuit_breakers": circuits,
 		"timestamp":        time.Now().Format(time.RFC3339),
+		"ip_fetches":       m.ipFetches.Load(),
+        "ip_fetch_errors":  m.ipFetchErrors.Load(),
 	}
 }
 
@@ -307,6 +320,9 @@ func (m *Metrics) GetPrometheusMetrics() string {
 		sb.WriteString(strconv.Itoa(stateVal))
 		sb.WriteByte('\n')
 	}
+
+	sb.WriteString(fmt.Sprintf("homedash_ip_fetches_total %d\n", m.ipFetches.Load()))
+    sb.WriteString(fmt.Sprintf("homedash_ip_fetch_errors_total %d\n", m.ipFetchErrors.Load()))
 
 	return sb.String()
 }

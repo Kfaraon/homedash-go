@@ -2,6 +2,7 @@ package main
 
 import (
 	"html/template"
+	"time"
 )
 
 // ─── Types ───
@@ -44,4 +45,12 @@ type iconEntry struct {
 type AdminData struct {
 	Groups     []Group
 	GroupsJSON template.JS
+}
+
+// IPCache holds cached public IP with metadata
+type IPCache struct {
+    IP        string    `json:"ip"`
+    Type      string    `json:"type"` // "ipv4" or "ipv6"
+    Provider  string    `json:"provider"`
+    FetchedAt time.Time `json:"fetched_at"`
 }
