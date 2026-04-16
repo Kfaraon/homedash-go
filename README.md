@@ -93,6 +93,8 @@ docker compose up -d
 | `ADMIN_API_KEY` | _(пусто)_ | API-ключ для доступа к админ-панели |
 | `ALLOWED_ORIGINS` | `*` | Список разрешённых CORS origins через запятую |
 | `CONFIG_FILE` | `config.json` | Путь к файлу конфигурации |
+| `IP_PROVIDERS` | `api.ipify.org,icanhazip.com,ifconfig.co/ip,ident.me` | Список fallback-провайдеров для определения публичного IP |
+| `IP_CACHE_TTL` | `10m` | Время жизни кеша публичного IP |
 | `TZ` | `Europe/Moscow` | Часовой пояс |
 
 Пример:
@@ -152,88 +154,16 @@ homedash-go/
 
 ## 🎨 Поддерживаемые иконки
 
-Иконки автоматически подбираются по имени сервиса из **Iconify** (Simple Icons + MDI). Поддержка **100+** сервисов:
-
-| Категория | Сервисы |
-|-----------|---------|
-| **Виртуализация** | Proxmox, VMware, VirtualBox, Hyper-V |
-| **Сеть и DNS** | AdGuard, Cloudflare, OPNsense, pfSense, MikroTik, Ubiquiti |
-| **Умный дом** | Home Assistant, Homebridge, Domoticz, ioBroker |
-| **Контейнеры** | Docker, Podman, Kubernetes, Portainer, Rancher |
-| **Мониторинг** | Grafana, Prometheus, Datadog, Uptime Kuma, Zabbix, Netdata |
-| **Веб-серверы** | Nginx, Apache, Caddy, Traefik, HAProxy |
-| **Базы данных** | PostgreSQL, MySQL, MariaDB, Redis, MongoDB, Elasticsearch, InfluxDB, SQLite |
-| **Безопасность** | Pi-hole, Bitwarden, Vaultwarden, WireGuard, Tailscale, Authentik, Authelia |
-| **Медиа** | Plex, Jellyfin, Emby, Sonarr, Radarr, Prowlarr, Lidarr, qBittorrent, Transmission |
-| **Облака и NAS** | Nextcloud, ownCloud, TrueNAS, Synology, QNAP, MinIO |
-| **CI/CD и dev** | GitHub, GitLab, Gitea, Jenkins, SonarQube |
-| **Коммуникации** | Telegram, Discord, Slack, Mattermost, Matrix, Zulip |
-| **Прочее** | Firefox, Chrome, VS Code, Notion, Obsidian, Spotify, YouTube, Steam |
-
-Если иконка не найдена — генерируется SVG-заглушка с первой буквой имени на фирменном фоне.
+Автоматически подбираются по имени сервиса из Iconify (Simple Icons + MDI). Если иконка не найдена — генерируется SVG-заглушка с первой буквой на фирменном фоне.
+(Полный список: Proxmox, AdGuard, Home Assistant, Docker, Grafana, Nginx, PostgreSQL, Pi-hole, Plex, Nextcloud, GitHub, Telegram, Spotify и 100+ других)
 
 ## 🔌 API
 
-### `GET /api/status`
+Публичные эндпоинты: GET /, GET /api/status, GET /health, GET /api/myip, GET /api/metrics (JSON), GET /metrics (Prometheus).
 
-Возвращает статусы всех сервисов (кешируется на 3 секунды, stale-while-revalidate до 15с):
+Админ-панель API: полный CRUD групп/сервисов, перемещение, сортировка.
 
-```json
-{
-  "services": {
-    "Google": {
-      "available": true,
-      "http": true,
-      "ping": null
-    },
-    "Nginx": {
-      "available": false,
-      "http": false,
-      "ping": true
-    }
-  },
-  "timestamp": "2026-04-10T14:53:00+05:00"
-}
-```
-
-### `GET /health`
-
-Health check endpoint (для Docker и оркестраторов):
-
-```json
-{
-  "status": "ok",
-  "config_ok": true,
-  "cache_entries": 16,
-  "groups_count": 2,
-  "timestamp": "2026-04-10T14:53:00+05:00"
-}
-```
-
-### `GET /metrics`
-
-Метрики в JSON формате для фронтенда.
-
-### `GET /metrics`
-
-Метрики в формате Prometheus (text).
-
-### Админ-панель API
-
-> 🔒 Все admin endpoints требуют заголовок `Authorization: Bearer <ADMIN_API_KEY>`.  
-> Без ключа возвращается `403 Forbidden`.
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| `GET` | `/api/admin/groups` | Получить все группы |
-| `POST` | `/api/admin/group` | Добавить группу |
-| `DELETE` | `/api/admin/group` | Удалить группу |
-| `PUT` | `/api/admin/group` | Переименовать группу |
-| `POST` | `/api/admin/service` | Добавить сервис в группу |
-| `PUT` | `/api/admin/service` | Обновить сервис |
-| `DELETE` | `/api/admin/service` | Удалить сервис |
-| `POST` | `/api/admin/service/move` | Переместить сервис в другую группу |
-| `POST` | `/api/admin/service/reorder` | Изменить порядок сервисов |
+📖 Подробная спецификация: API_REFERENCE.md
 
 ## 🛠️ Технологии
 
