@@ -71,6 +71,9 @@ No cache → return empty + refresh in background
 | `ADMIN_API_KEY` | `""` | Admin panel API key (empty = disabled) |
 | `ALLOWED_ORIGINS` | `""` | CORS allowed origins (comma-separated, `*` if empty) |
 | `CONFIG_FILE` | `config.json` | Path to config file |
+| `IP_PROVIDERS` | `api.ipify.org,icanhazip.com,ifconfig.co/ip,ident.me` | Fallback providers for public IP |
+| `IP_CACHE_TTL` | `10m` | Cache duration for public IP |
+| `TZ` | `Europe/Moscow` | Timezone |
 
 ### config.json Structure
 
