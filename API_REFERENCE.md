@@ -78,6 +78,8 @@ Returns internal metrics in JSON format for frontend consumption.
   "cache_misses": 12,
   "active_checks": 8,
   "circuit_breakers": {"Nginx": "open"},
+  "ip_fetches": 12,
+  "ip_fetch_errors": 0,
   "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
