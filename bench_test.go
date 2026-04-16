@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"fmt"
+	"html/template"
 	"testing"
 	"time"
 )
@@ -97,6 +101,101 @@ func BenchmarkMetricsGetPrometheusMetrics(b *testing.B) {
 // ─── Benchmarks: Worker pool ───
 // Note: BenchmarkCheckServicesParallel skipped — makes real HTTP requests
 // which are slow and flaky in benchmarks. Use integration tests instead.
+
+// ─── Benchmarks: Service checks ───
+
+func BenchmarkCheckServiceHTTP(b *testing.B) {
+	ctx := context.Background()
+	service := Service{
+		Name:      "Test Service",
+		URL:       "http://example.com",
+		VerifySSL: false,
+	}
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = checkService(ctx, service, 1*time.Second)
+	}
+}
+
+func BenchmarkCheckServicePing(b *testing.B) {
+	ctx := context.Background()
+	service := Service{
+		Name: "Test Service",
+		IP:   "127.0.0.1",
+	}
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = checkService(ctx, service, 1*time.Second)
+	}
+}
+
+func BenchmarkCheckServicesSequential(b *testing.B) {
+	ctx := context.Background()
+	services := make([]Service, 10)
+	for i := range services {
+		services[i] = Service{
+			Name:      fmt.Sprintf("Service %d", i),
+			URL:       fmt.Sprintf("http://example%d.com", i),
+			VerifySSL: false,
+		}
+	}
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, service := range services {
+			_ = checkService(ctx, service, 1*time.Second)
+		}
+	}
+}
+
+// ─── Benchmarks: Cache operations ───
+
+func BenchmarkCacheSetGet(b *testing.B) {
+	app := setupBenchmarkApp(b)
+	cacheSize := 1000
+	cache := make(map[string]Status, cacheSize)
+	for i := 0; i < cacheSize; i++ {
+		cache[fmt.Sprintf("service-%d", i)] = Status{Available: i%2 == 0}
+	}
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		app.SetCache(cache)
+		_ = app.GetCache()
+	}
+}
+
+// ─── Benchmarks: Template rendering ───
+
+func BenchmarkTemplateRender(b *testing.B) {
+	app := setupBenchmarkApp(b)
+	// Create test templates
+	homeTmpl, err := template.New("home").Parse(`{{range .Groups}}<div>{{.Name}}</div>{{end}}`)
+	if err != nil {
+		b.Fatal(err)
+	}
+	app.HomeTmpl = homeTmpl
+	
+	data := struct {
+		Groups []Group
+	}{
+		Groups: []Group{
+			{Name: "Group 1", Services: []Service{{Name: "Service 1"}}},
+			{Name: "Group 2", Services: []Service{{Name: "Service 2"}}},
+		},
+	}
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		if err := app.HomeTmpl.Execute(&buf, data); err != nil {
+			b.Fatal(err)
+		}
+		_ = buf.String()
+	}
+}
 
 // ─── Helpers ───
 

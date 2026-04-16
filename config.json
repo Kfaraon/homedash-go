@@ -4,12 +4,6 @@
       "name": "Внешние сервисы",
       "services": [
         {
-          "name": "Google",
-          "url": "https://google.com",
-          "ip": "",
-          "verify_ssl": false
-        },
-        {
           "name": "GitHub",
           "url": "https://github.com",
           "ip": "",
@@ -18,6 +12,12 @@
         {
           "name": "Spotify",
           "url": "https://spotify.com",
+          "ip": "",
+          "verify_ssl": false
+        },
+        {
+          "name": "Google",
+          "url": "https://google.com",
           "ip": "",
           "verify_ssl": false
         },

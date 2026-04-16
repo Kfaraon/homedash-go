@@ -20,9 +20,15 @@ services:
       - ADMIN_API_KEY=${ADMIN_API_KEY:-}
       - IP_PROVIDERS=https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip,https://ident.me
       - IP_CACHE_TTL=10m
+      # Новые переменные для оптимизаций производительности
+      - MAX_WORKERS=${MAX_WORKERS:-20}
+      - USE_LRU_CACHE=${USE_LRU_CACHE:-false}
+      - LRU_CACHE_CAPACITY=${LRU_CACHE_CAPACITY:-1000}
+      - LRU_CACHE_TTL=${LRU_CACHE_TTL:-5m}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/health"]
+      # Используем curl как основной метод, wget как fallback (реализовано в healthcheck.sh)
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 30s
       timeout: 5s
       retries: 3

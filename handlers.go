@@ -370,7 +370,7 @@ func (app *App) refreshCache(ctx context.Context, groups []Group) {
 	checkCtx, cancel := context.WithTimeout(ctx, time.Duration(len(groups)*2)*time.Second)
 	defer cancel()
 
-	sm := checkServicesInParallel(checkCtx, groups, app.Metrics, app.PingTimeout)
+	sm := checkServicesInParallel(checkCtx, groups, app.Metrics, app.PingTimeout, app.MaxWorkers)
 	app.SetCache(sm)
 }
 

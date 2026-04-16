@@ -25,8 +25,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -
 # ========== RUNTIME STAGE ==========
 FROM alpine:3.20 AS runtime
 
-# Минимальный набор: ca-certificates для HTTPS, wget для healthcheck
-RUN apk add --no-cache ca-certificates wget tzdata
+# Минимальный набор: ca-certificates для HTTPS, wget и curl для healthcheck
+RUN apk add --no-cache ca-certificates wget curl tzdata
 
 WORKDIR /app
 
@@ -39,6 +39,21 @@ COPY --from=builder /app/static ./static
 
 # Копируем конфиг напрямую (не из builder, т.к. он там не копируется)
 COPY config.json .
+
+# Создаём скрипт healthcheck (curl как основной, wget как fallback)
+RUN echo '#!/bin/sh\n\
+# Healthcheck script with curl primary, wget fallback\n\
+if command -v curl >/dev/null 2>&1; then\n\
+    curl -f http://localhost:5000/health >/dev/null 2>&1\n\
+    exit $?\n\
+elif command -v wget >/dev/null 2>&1; then\n\
+    wget --no-verbose --tries=1 --spider http://localhost:5000/health >/dev/null 2>&1\n\
+    exit $?\n\
+else\n\
+    echo "No HTTP client available for healthcheck"\n\
+    exit 1\n\
+fi' > /usr/local/bin/healthcheck.sh && \
+    chmod +x /usr/local/bin/healthcheck.sh
 
 # Создаём непривилегированного пользователя
 RUN addgroup -g 1000 appgroup && \
@@ -56,9 +71,9 @@ ENV CONFIG_FILE=config.json
 
 EXPOSE 5000
 
-# Health check через wget
+# Health check через универсальный скрипт
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:5000/health || exit 1
+    CMD /usr/local/bin/healthcheck.sh
 
 # Запуск от непривилегированного пользователя
 USER appuser

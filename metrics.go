@@ -335,7 +335,7 @@ type CheckResult struct {
 }
 
 // checkServicesInParallel checks all services in parallel with a true worker pool
-func checkServicesInParallel(ctx context.Context, groups []Group, metrics *Metrics, pingTimeout time.Duration) map[string]Status {
+func checkServicesInParallel(ctx context.Context, groups []Group, metrics *Metrics, pingTimeout time.Duration, maxWorkers int) map[string]Status {
 	// Collect all services
 	type serviceTask struct {
 		Svc         Service
@@ -357,7 +357,6 @@ func checkServicesInParallel(ctx context.Context, groups []Group, metrics *Metri
 	}
 
 	// Worker pool: fixed number of workers reading from a channel
-	const maxWorkers = 20
 	workers := maxWorkers
 	if len(tasks) < workers {
 		workers = len(tasks)

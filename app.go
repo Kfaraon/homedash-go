@@ -37,6 +37,12 @@ type App struct {
 	IPCache        *IPCache
 	IPCacheMu      sync.RWMutex
 	
+	// Performance settings
+	MaxWorkers int // maximum number of parallel workers for service checks
+	UseLRUCache bool // whether to use LRU cache instead of simple map
+	LRUCacheCapacity int // maximum number of entries in LRU cache (0 = unlimited)
+	LRUCacheTTL time.Duration // TTL for cache entries (0 = no expiration)
+
 	// State
 	State *AppState
 
@@ -78,6 +84,7 @@ func NewApp() (*App, error) {
 		PingTimeout:    getDurationEnv("PING_TIMEOUT", 1*time.Second),
 		AdminAPIKey:    adminAPIKey,
 		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
+		MaxWorkers:     getIntEnv("MAX_WORKERS", 20), // default 20 workers
 		State: &AppState{
 			cache: make(map[string]Status),
 			stale: make(map[string]Status),
