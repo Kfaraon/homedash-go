@@ -37,8 +37,9 @@ COPY --from=builder /app/homedash .
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/static ./static
 
-# Копируем конфиг напрямую (не из builder, т.к. он там не копируется)
-COPY config.json .
+# Копируем конфиг в папку data
+RUN mkdir -p data
+COPY data/config.json data/
 
 # Создаём скрипт healthcheck (curl как основной, wget как fallback)
 RUN echo '#!/bin/sh\n\
@@ -67,7 +68,7 @@ ENV TZ=Europe/Moscow
 ENV PORT=5000
 ENV CHECK_TIMEOUT=2s
 ENV PING_TIMEOUT=1s
-ENV CONFIG_FILE=config.json
+ENV CONFIG_FILE=/app/data/config.json
 
 EXPOSE 5000
 

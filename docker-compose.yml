@@ -7,11 +7,9 @@ services:
     ports:
       - "${HOMEDASH_PORT:-5000}:5000"
     volumes:
-      # Монтируем конфиг с хоста (hot-reload через fsnotify)
-      # Примечание: на Windows с Docker Desktop fsnotify может не работать
-      # с bind mount из-за различий файловых систем.
-      # Решение: использовать Docker с WSL2 backend или скопировать конфиг в image.
-      - ./config.json:/app/config.json:ro
+      # Монтируем директорию с конфигами вместо отдельного файла
+      # Это позволяет избежать ошибок при записи файла config.json в Docker
+      - ./data:/app/data
     environment:
       - PORT=5000
       - CHECK_TIMEOUT=2s
@@ -20,6 +18,8 @@ services:
       - ADMIN_API_KEY=${ADMIN_API_KEY:-}
       - IP_PROVIDERS=https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip,https://ident.me
       - IP_CACHE_TTL=10m
+      # Путь к конфигурационному файлу (используется папка data вместо корневой)
+      - CONFIG_FILE=/app/data/config.json
       # Новые переменные для оптимизаций производительности
       - MAX_WORKERS=${MAX_WORKERS:-20}
       - USE_LRU_CACHE=${USE_LRU_CACHE:-false}
