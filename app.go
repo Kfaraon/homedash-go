@@ -32,16 +32,16 @@ type App struct {
 	AllowedOrigins   string
 
 	// IP settings
-	IPProviders    []string      // fallback list
-	IPCacheTTL     time.Duration // cache duration
-	IPCache        *IPCache
-	IPCacheMu      sync.RWMutex
-	
+	IPProviders []string      // fallback list
+	IPCacheTTL  time.Duration // cache duration
+	IPCache     *IPCache
+	IPCacheMu   sync.RWMutex
+
 	// Performance settings
-	MaxWorkers int // maximum number of parallel workers for service checks
-	UseLRUCache bool // whether to use LRU cache instead of simple map
-	LRUCacheCapacity int // maximum number of entries in LRU cache (0 = unlimited)
-	LRUCacheTTL time.Duration // TTL for cache entries (0 = no expiration)
+	MaxWorkers       int           // maximum number of parallel workers for service checks
+	UseLRUCache      bool          // whether to use LRU cache instead of simple map
+	LRUCacheCapacity int           // maximum number of entries in LRU cache (0 = unlimited)
+	LRUCacheTTL      time.Duration // TTL for cache entries (0 = no expiration)
 
 	// State
 	State *AppState
@@ -60,6 +60,11 @@ type App struct {
 	// Reload mutex to prevent concurrent reloads
 	reloadMu sync.Mutex
 
+	// Lazy evaluation: трекинг активности
+	lastAccess   atomic.Int64  // unix timestamp последнего запроса
+	checkActive  atomic.Bool   // запущен ли цикл фоновых проверок
+	isRefreshing atomic.Bool   // защита от параллельного refresh
+	idleTimeout  time.Duration // время простоя перед паузой проверок
 }
 
 // AppState holds runtime state with thread-safe access
@@ -89,16 +94,20 @@ func NewApp() (*App, error) {
 			cache: make(map[string]Status),
 			stale: make(map[string]Status),
 		},
-		Metrics: NewMetrics(),
-		Done:    make(chan struct{}),
+		Metrics:     NewMetrics(),
+		idleTimeout: getDurationEnv("IDLE_TIMEOUT", 5*time.Minute),
+		Done:        make(chan struct{}),
 	}
+	app.lastAccess.Store(time.Now().Unix())
+	app.checkActive.Store(false)
+	app.isRefreshing.Store(false)
 	app.RequireAdminAuth.Store(adminAPIKey != "")
 
 	// IP providers config
 	providersEnv := getEnv("IP_PROVIDERS", "https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip")
 	app.IPProviders = strings.Split(providersEnv, ",")
 	for i := range app.IPProviders {
-    	app.IPProviders[i] = strings.TrimSpace(app.IPProviders[i])
+		app.IPProviders[i] = strings.TrimSpace(app.IPProviders[i])
 	}
 	app.IPCacheTTL = getDurationEnv("IP_CACHE_TTL", 10*time.Minute)
 	app.IPCache = &IPCache{}
@@ -129,6 +138,16 @@ func NewApp() (*App, error) {
 	}
 
 	return app, nil
+}
+
+// isActive возвращает true, если был запрос за последний idleTimeout
+func (a *App) isActive() bool {
+	return time.Since(time.Unix(a.lastAccess.Load(), 0)) < a.idleTimeout
+}
+
+// markAccess обновляет время последнего доступа
+func (a *App) markAccess() {
+	a.lastAccess.Store(time.Now().Unix())
 }
 
 // ─── Template initialization ───
@@ -276,6 +295,9 @@ func (app *App) GetStaleCache() (map[string]Status, bool) {
 
 // Run starts the HTTP server and blocks until shutdown
 func (app *App) Run() error {
+	// Запускаем цикл проверок только при активности
+	go app.startLazyCheckLoop()
+
 	// Start config watcher
 	app.StartConfigWatcher()
 
@@ -322,6 +344,65 @@ func (app *App) Run() error {
 	return nil
 }
 
+// startLazyCheckLoop — цикл с авто-паузой при простое
+func (app *App) startLazyCheckLoop() {
+	ticker := time.NewTicker(30 * time.Second) // можно вынести в env
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-app.Done:
+			app.checkActive.Store(false)
+			return
+		case <-ticker.C:
+			// Если нет активности — пропускаем итерацию (не останавливаем горутину)
+			if !app.isActive() {
+				continue
+			}
+			// Есть активность — обновляем кэш в фоне
+			app.refreshCacheIfNeeded()
+		}
+	}
+}
+
+// refreshCacheIfNeeded — безопасный запуск фонового обновления
+func (app *App) refreshCacheIfNeeded() {
+	// Атомарная блокировка: только одна горутина делает обновление
+	if !app.isRefreshing.CompareAndSwap(false, true) {
+		return
+	}
+	defer app.isRefreshing.Store(false)
+
+	// Используем app.Done для graceful shutdown
+	ctx, cancel := context.WithTimeout(
+		context.WithValue(context.Background(), struct{}{}, app.Done),
+		15*time.Second,
+	)
+	defer cancel()
+
+	// Проверяем, не закрыт ли канал Done
+	select {
+	case <-app.Done:
+		return
+	default:
+	}
+
+	groups := app.GetGroupsCopy()
+	sm := checkServicesInParallel(ctx, groups, app.Metrics, app.PingTimeout, app.MaxWorkers)
+	app.SetCache(sm)
+}
+
+// trackAccessMiddleware — обновляет lastAccess при запросах к основным эндпоинтам
+func (app *App) trackAccessMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Отслеживаем только пользовательские запросы (не статику/админку)
+		if r.URL.Path == "/" || r.URL.Path == "/api/status" || r.URL.Path == "/health" {
+			app.markAccess()
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // ─── Router ───
 
 func (app *App) buildRouter() http.Handler {
@@ -332,9 +413,9 @@ func (app *App) buildRouter() http.Handler {
 	mux.Handle("/static/", staticHandler)
 
 	// Main routes
-	mux.HandleFunc("/", app.ServeHome)
-	mux.HandleFunc("/api/status", app.ServeStatus)
-	mux.HandleFunc("/health", app.ServeHealth)
+	mux.Handle("/", app.trackAccessMiddleware(http.HandlerFunc(app.ServeHome)))
+	mux.Handle("/api/status", app.trackAccessMiddleware(http.HandlerFunc(app.ServeStatus)))
+	mux.Handle("/health", app.trackAccessMiddleware(http.HandlerFunc(app.ServeHealth)))
 	mux.HandleFunc("/api/myip", app.ServeMyIP)
 	mux.HandleFunc("/api/metrics", app.ServeMetrics)
 	mux.HandleFunc("/metrics", app.ServePrometheusMetrics)

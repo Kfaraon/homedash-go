@@ -116,116 +116,116 @@ func (app *App) ServeHealth(w http.ResponseWriter, r *http.Request) {
 
 // ServeMyIP — returns cached or fresh public IP address
 func (app *App) ServeMyIP(w http.ResponseWriter, r *http.Request) {
-    // Check cache first
-    if cached := app.getCachedIP(); cached != "" {
-        w.Header().Set("Content-Type", "text/plain")
-        w.Header().Set("X-IP-Source", "cache")
-        w.Write([]byte(cached))
-        return
-    }
+	// Check cache first
+	if cached := app.getCachedIP(); cached != "" {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("X-IP-Source", "cache")
+		w.Write([]byte(cached))
+		return
+	}
 
-    // Fetch fresh IP with fallback providers
-    ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-    defer cancel()
+	// Fetch fresh IP with fallback providers
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 
-    ip, ipType, provider := app.fetchPublicIP(ctx)
-    if ip == "" {
-        app.Metrics.IncrementIPFetchErrors()
-        http.Error(w, "Failed to determine public IP", http.StatusBadGateway)
-        return
-    }
+	ip, ipType, provider := app.fetchPublicIP(ctx)
+	if ip == "" {
+		app.Metrics.IncrementIPFetchErrors()
+		http.Error(w, "Failed to determine public IP", http.StatusBadGateway)
+		return
+	}
 
-    // Update cache
-    app.updateIPCache(ip, ipType, provider)
-    app.Metrics.IncrementIPFetches()
+	// Update cache
+	app.updateIPCache(ip, ipType, provider)
+	app.Metrics.IncrementIPFetches()
 
-    w.Header().Set("Content-Type", "text/plain")
-    w.Header().Set("X-IP-Source", "fresh")
-    w.Header().Set("X-IP-Provider", provider)
-    w.Write([]byte(ip))
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("X-IP-Source", "fresh")
+	w.Header().Set("X-IP-Provider", provider)
+	w.Write([]byte(ip))
 }
 
 // getCachedIP returns cached IP if still valid
 func (app *App) getCachedIP() string {
-    app.IPCacheMu.RLock()
-    defer app.IPCacheMu.RUnlock()
-    
-    if app.IPCache.IP != "" && time.Since(app.IPCache.FetchedAt) < app.IPCacheTTL {
-        return app.IPCache.IP
-    }
-    return ""
+	app.IPCacheMu.RLock()
+	defer app.IPCacheMu.RUnlock()
+
+	if app.IPCache.IP != "" && time.Since(app.IPCache.FetchedAt) < app.IPCacheTTL {
+		return app.IPCache.IP
+	}
+	return ""
 }
 
 // updateIPCache thread-safely updates the cache
 func (app *App) updateIPCache(ip, ipType, provider string) {
-    app.IPCacheMu.Lock()
-    defer app.IPCacheMu.Unlock()
-    
-    app.IPCache = &IPCache{
-        IP:        ip,
-        Type:      ipType,
-        Provider:  provider,
-        FetchedAt: time.Now(),
-    }
+	app.IPCacheMu.Lock()
+	defer app.IPCacheMu.Unlock()
+
+	app.IPCache = &IPCache{
+		IP:        ip,
+		Type:      ipType,
+		Provider:  provider,
+		FetchedAt: time.Now(),
+	}
 }
 
 // fetchPublicIP tries providers in order until one succeeds
 func (app *App) fetchPublicIP(ctx context.Context) (ip, ipType, provider string) {
-    client := getHTTPClient(true)
-    
-    // Переименовали переменную цикла: url → providerURL
-    for _, providerURL := range app.IPProviders {
-        select {
-        case <-ctx.Done():
-            return "", "", ""
-        default:
-        }
+	client := getHTTPClient(true)
 
-        req, err := http.NewRequestWithContext(ctx, "GET", providerURL, nil)
-        if err != nil {
-            slog.Debug("Failed to create IP request", "provider", providerURL, "error", err)
-            continue
-        }
-        req.Header.Set("User-Agent", "homedash-go/1.0")
-        req.Header.Set("Accept", "text/plain")
+	// Переименовали переменную цикла: url → providerURL
+	for _, providerURL := range app.IPProviders {
+		select {
+		case <-ctx.Done():
+			return "", "", ""
+		default:
+		}
 
-        resp, err := client.Do(req)
-        if err != nil {
-            slog.Debug("IP provider failed", "provider", providerURL, "error", err)
-            continue
-        }
+		req, err := http.NewRequestWithContext(ctx, "GET", providerURL, nil)
+		if err != nil {
+			slog.Debug("Failed to create IP request", "provider", providerURL, "error", err)
+			continue
+		}
+		req.Header.Set("User-Agent", "homedash-go/1.0")
+		req.Header.Set("Accept", "text/plain")
 
-        body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
-        resp.Body.Close()
-        
-        if err != nil || resp.StatusCode != http.StatusOK {
-            continue
-        }
+		resp, err := client.Do(req)
+		if err != nil {
+			slog.Debug("IP provider failed", "provider", providerURL, "error", err)
+			continue
+		}
 
-        ip = strings.TrimSpace(string(body))
-        if net.ParseIP(ip) == nil {
-            continue
-        }
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+		resp.Body.Close()
 
-        // Detect IP type
-        if strings.Contains(ip, ":") {
-            ipType = "ipv6"
-        } else {
-            ipType = "ipv4"
-        }
-        
-        // Теперь url.Parse работает корректно — это обращение к пакету
-        if u, err := url.Parse(providerURL); err == nil {
-            provider = u.Host
-        } else {
-            provider = providerURL
-        }
-        
-        slog.Debug("Public IP fetched", "ip", ip, "type", ipType, "provider", provider)
-        return ip, ipType, provider
-    }
-    
-    return "", "", ""
+		if err != nil || resp.StatusCode != http.StatusOK {
+			continue
+		}
+
+		ip = strings.TrimSpace(string(body))
+		if net.ParseIP(ip) == nil {
+			continue
+		}
+
+		// Detect IP type
+		if strings.Contains(ip, ":") {
+			ipType = "ipv6"
+		} else {
+			ipType = "ipv4"
+		}
+
+		// Теперь url.Parse работает корректно — это обращение к пакету
+		if u, err := url.Parse(providerURL); err == nil {
+			provider = u.Host
+		} else {
+			provider = providerURL
+		}
+
+		slog.Debug("Public IP fetched", "ip", ip, "type", ipType, "provider", provider)
+		return ip, ipType, provider
+	}
+
+	return "", "", ""
 }
 
 // ServeMetrics — handler for metrics (JSON format for frontend)
@@ -353,25 +353,22 @@ func (app *App) getCachedStatuses(groups []Group) map[string]any {
 	// Stale-while-revalidate: return stale cache while refreshing
 	if stale, ok := app.GetStaleCache(); ok {
 		app.Metrics.IncrementCacheHits()
-		// Background refresh
-		go app.refreshCache(context.Background(), groups)
+		// Фоновое обновление с защитой от параллельных запусков
+		go app.refreshCacheIfNeeded()
 		return app.statusResp(stale)
 	}
 
 	// No cache at all — return empty result and refresh in background
 	// Never block the HTTP handler
 	app.Metrics.IncrementCacheMisses()
-	go app.refreshCache(context.Background(), groups)
+	go app.refreshCacheIfNeeded()
 	return app.statusResp(make(map[string]Status))
 }
 
-// refreshCache background cache refresh
+// refreshCache оставлен для обратной совместимости, но теперь делегирует в refreshCacheIfNeeded
 func (app *App) refreshCache(ctx context.Context, groups []Group) {
-	checkCtx, cancel := context.WithTimeout(ctx, time.Duration(len(groups)*2)*time.Second)
-	defer cancel()
-
-	sm := checkServicesInParallel(checkCtx, groups, app.Metrics, app.PingTimeout, app.MaxWorkers)
-	app.SetCache(sm)
+	// Игнорируем входной ctx — используем внутренний с защитой
+	app.refreshCacheIfNeeded()
 }
 
 func (app *App) statusResp(services map[string]Status) map[string]any {

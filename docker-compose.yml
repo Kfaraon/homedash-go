@@ -25,14 +25,27 @@ services:
       - USE_LRU_CACHE=${USE_LRU_CACHE:-false}
       - LRU_CACHE_CAPACITY=${LRU_CACHE_CAPACITY:-1000}
       - LRU_CACHE_TTL=${LRU_CACHE_TTL:-5m}
+      # Lazy evaluation: пауза проверок при простое
+      - IDLE_TIMEOUT=5m
+      # Оптимизация ресурсов
+      - MAX_WORKERS=20
+      - GOMAXPROCS=2
     restart: unless-stopped
     healthcheck:
       # Используем curl как основной метод, wget как fallback (реализовано в healthcheck.sh)
-      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      #test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
     networks:
       - homedash-net
 
