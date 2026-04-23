@@ -65,6 +65,8 @@ type App struct {
 	checkActive  atomic.Bool   // запущен ли цикл фоновых проверок
 	isRefreshing atomic.Bool   // защита от параллельного refresh
 	idleTimeout  time.Duration // время простоя перед паузой проверок
+
+	iconResolver *IconResolver
 }
 
 // AppState holds runtime state with thread-safe access
@@ -102,6 +104,8 @@ func NewApp() (*App, error) {
 	app.checkActive.Store(false)
 	app.isRefreshing.Store(false)
 	app.RequireAdminAuth.Store(adminAPIKey != "")
+
+	app.iconResolver = NewIconResolver()
 
 	// IP providers config
 	providersEnv := getEnv("IP_PROVIDERS", "https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip")
@@ -154,10 +158,10 @@ func (a *App) markAccess() {
 
 func (app *App) initTemplates() error {
 	homeFuncs := template.FuncMap{
-		"resolveIcon":      resolveIcon,
-		"resolveColor":     resolveColor,
-		"resolveIconColor": resolveIconColor,
-		"resolveIconCDN":   resolveIconCDN,
+		"resolveIcon":      app.ResolveIcon,
+		"resolveColor":     app.ResolveColor,
+		"resolveIconColor": app.ResolveIconColor,
+		"resolveIconCDN":   app.ResolveIconCDN,
 	}
 
 	homeTmpl, err := template.New("home.html").Funcs(homeFuncs).ParseFiles("templates/home.html")
@@ -589,6 +593,7 @@ func (app *App) reloadConfig() {
 		app.RequireAdminAuth.Store(app.AdminAPIKey != "" && cfg.admin.RequireAPIKey)
 	}
 
+	app.iconResolver.ClearCache()
 	app.SetGroups(g)
 	app.Metrics.Reset()
 

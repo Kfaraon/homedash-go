@@ -965,3 +965,16 @@ func (app *App) findServiceIndexLocked(services []Service, name string) (int, bo
 	}
 	return -1, false
 }
+
+func (app *App) ResolveIcon(name, explicitIcon string) string {
+	return app.iconResolver.ResolveIcon(name, explicitIcon)
+}
+func (app *App) ResolveColor(name string) string {
+	return app.iconResolver.ResolveColor(name)
+}
+func (app *App) ResolveIconColor(name string) string {
+	return app.iconResolver.ResolveIconColor(name)
+}
+func (app *App) ResolveIconCDN(name, explicitIcon string) string {
+	return app.iconResolver.ResolveIconCDN(name, explicitIcon)
+}

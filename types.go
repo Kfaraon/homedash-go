@@ -34,13 +34,6 @@ type Status struct {
 	Ping      *bool `json:"ping"`
 }
 
-// iconEntry — запись в мапе иконок
-type iconEntry struct {
-	Icon      string
-	BgColor   string
-	IconColor string
-}
-
 // AdminData — данные для шаблона админки
 type AdminData struct {
 	Groups     []Group
@@ -49,8 +42,8 @@ type AdminData struct {
 
 // IPCache holds cached public IP with metadata
 type IPCache struct {
-    IP        string    `json:"ip"`
-    Type      string    `json:"type"` // "ipv4" or "ipv6"
-    Provider  string    `json:"provider"`
-    FetchedAt time.Time `json:"fetched_at"`
+	IP        string    `json:"ip"`
+	Type      string    `json:"type"` // "ipv4" or "ipv6"
+	Provider  string    `json:"provider"`
+	FetchedAt time.Time `json:"fetched_at"`
 }

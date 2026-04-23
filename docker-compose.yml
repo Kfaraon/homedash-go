@@ -20,6 +20,8 @@ services:
       - IP_CACHE_TTL=10m
       # Путь к конфигурационному файлу (используется папка data вместо корневой)
       - CONFIG_FILE=/app/data/config.json
+      # Путь к файлу с иконками
+      - ICONS_CONFIG_PATH=/app/data/icons.json
       # Новые переменные для оптимизаций производительности
       - MAX_WORKERS=${MAX_WORKERS:-20}
       - USE_LRU_CACHE=${USE_LRU_CACHE:-false}
