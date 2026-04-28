@@ -369,31 +369,46 @@ func (app *App) startLazyCheckLoop() {
 	}
 }
 
-// refreshCacheIfNeeded — безопасный запуск фонового обновления
+// app.go — метод refreshCacheIfNeeded, замена блока с контекстом
 func (app *App) refreshCacheIfNeeded() {
-	// Атомарная блокировка: только одна горутина делает обновление
 	if !app.isRefreshing.CompareAndSwap(false, true) {
 		return
 	}
 	defer app.isRefreshing.Store(false)
 
-	// Используем app.Done для graceful shutdown
-	ctx, cancel := context.WithTimeout(
-		context.WithValue(context.Background(), struct{}{}, app.Done),
-		15*time.Second,
-	)
-	defer cancel()
-
-	// Проверяем, не закрыт ли канал Done
+	// Проверка завершения ДО начала работы
 	select {
 	case <-app.Done:
 		return
 	default:
 	}
 
+	// Контекст с таймаутом
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Горутина для проверки app.Done параллельно с работой
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-app.Done:
+			cancel() // Принудительная отмена
+		case <-done:
+		}
+	}()
+
 	groups := app.GetGroupsCopy()
 	sm := checkServicesInParallel(ctx, groups, app.Metrics, app.PingTimeout, app.MaxWorkers)
-	app.SetCache(sm)
+
+	close(done) // Останавливаем горутину-наблюдатель
+
+	// Записываем кэш только если не было отмены
+	select {
+	case <-app.Done:
+		return
+	default:
+		app.SetCache(sm)
+	}
 }
 
 // trackAccessMiddleware — обновляет lastAccess при запросах к основным эндпоинтам

@@ -37,15 +37,15 @@ type iconEntry struct {
 
 // IconResolver отвечает за поиск иконок, цветов и CDN-ссылок.
 type IconResolver struct {
-	entries []*iconEntry
-	iconMap map[string]*iconEntry // точный ключ -> entry
-	aliases map[string]string     // алиас -> ключ
-	tokenDF map[string]float64    // IDF вес токенов
-
+	entries       []*iconEntry
+	iconMap       map[string]*iconEntry // точный ключ -> entry
+	aliases       map[string]string     // алиас -> ключ
+	tokenDF       map[string]float64    // IDF вес токенов
 	cache         sync.Map
 	categoryCache sync.Map
 	cdnCache      sync.Map
 	svgCache      sync.Map
+	colorCache    sync.Map // кэш сгенерированных пастельных цветов
 
 	categories       map[string]*Category
 	sortedCategories []string
@@ -54,9 +54,10 @@ type IconResolver struct {
 	normRegex    *regexp.Regexp
 	normReplacer *strings.Replacer
 
-	pastelSat float64
-	pastelVal float64
-	defaultBg string
+	pastelSat   float64
+	pastelVal   float64
+	defaultBg   string
+	goldenAngle float64 // 137.507764° для равномерного распределения оттенков
 
 	fallbackIcon  string
 	svgViewBox    string
@@ -69,10 +70,11 @@ type IconResolver struct {
 // NewIconResolver загружает конфиг из JSON и строит индексы.
 func NewIconResolver() *IconResolver {
 	r := &IconResolver{
-		iconMap:    make(map[string]*iconEntry),
-		aliases:    make(map[string]string),
-		categories: make(map[string]*Category),
-
+		iconMap:      make(map[string]*iconEntry),
+		aliases:      make(map[string]string),
+		categories:   make(map[string]*Category),
+		colorCache:   sync.Map{},
+		goldenAngle:  137.507764,
 		cdnTemplate:  "https://api.iconify.design/{collection}/{icon}.svg?color={color}",
 		pastelSat:    0.3,
 		pastelVal:    0.9,
@@ -99,10 +101,9 @@ func NewIconResolver() *IconResolver {
 		r.initDefaultCategories()
 	}
 
-	// убираем # из дефолтных цветов
+	// убираем # из цветов, используемых внутри SVG-заглушек
 	r.svgBgColor = strings.TrimPrefix(r.svgBgColor, "#")
 	r.svgTextColor = strings.TrimPrefix(r.svgTextColor, "#")
-	r.defaultBg = strings.TrimPrefix(r.defaultBg, "#")
 
 	r.buildIndices()
 	r.prepareSortedCategories()
@@ -113,7 +114,7 @@ func NewIconResolver() *IconResolver {
 func sanitizeJSON(data []byte) []byte {
 	s := string(data)
 	s = regexp.MustCompile(`"([^"]+?)\s*"\s*:`).ReplaceAllString(s, `"${1}":`)
-	s = regexp.MustCompile(`:\s*"([^"]*?)\s*"(,|\s*})`).ReplaceAllString(s, `: "${1}"$2`)
+	s = regexp.MustCompile(`:\s*"([^"]*?)"\s*(,|\s*})`).ReplaceAllString(s, `: "${1}"$2`)
 	s = strings.NewReplacer(
 		`"saturation":`, `"sat":`,
 		`"brightness":`, `"bright":`,
@@ -216,10 +217,10 @@ func (r *IconResolver) loadIconsFromJSON(path string) error {
 		r.svgViewBox = c
 	}
 	if c := strings.TrimSpace(cfg.Defaults.SVG.Bg); c != "" {
-		r.svgBgColor = c
+		r.svgBgColor = strings.TrimPrefix(c, "#")
 	}
 	if c := strings.TrimSpace(cfg.Defaults.SVG.Text); c != "" {
-		r.svgTextColor = c
+		r.svgTextColor = strings.TrimPrefix(c, "#")
 	}
 	if cfg.Defaults.SVG.Size > 0 {
 		r.svgFontSize = cfg.Defaults.SVG.Size
@@ -261,13 +262,13 @@ func (r *IconResolver) initDefaultCategories() {
 		"dev":            {FallbackIcons: []string{"mdi:code-braces", "mdi:git", "mdi:terminal"}, BgColor: "#E6F5E0", IconColor: "#609926", Keywords: []string{"dev", "git", "code"}},
 		"editor":         {FallbackIcons: []string{"mdi:file-code", "mdi:pencil", "mdi:note-text"}, BgColor: "#F0F0F0", IconColor: "#7C3AED", Keywords: []string{"editor", "text"}},
 		"virtualization": {FallbackIcons: []string{"mdi:server", "mdi:monitor-multiple", "mdi:cpu-64-bit"}, BgColor: "#E3F2FD", IconColor: "#E57000", Keywords: []string{"virtual", "vm", "proxmox"}},
-		"iot":            {FallbackIcons: []string{"mdi:access-point", "mdi:wifi", "mdi:bluetooth"}, BgColor: "#E6F5E0", IconColor: "", Keywords: []string{"iot", "esp", "arduino", "raspberry"}},
-		"os":             {FallbackIcons: []string{"mdi:desktop-classic", "mdi:linux", "mdi:microsoft-windows"}, BgColor: "#F0F0F0", IconColor: "", Keywords: []string{"os", "linux", "windows"}},
-		"browser":        {FallbackIcons: []string{"mdi:web", "mdi:earth", "mdi:application"}, BgColor: "#FDE8D0", IconColor: "", Keywords: []string{"browser", "chrome", "firefox"}},
-		"gaming":         {FallbackIcons: []string{"mdi:gamepad", "mdi:joystick", "mdi:television"}, BgColor: "#F0F0F0", IconColor: "", Keywords: []string{"game", "steam", "twitch"}},
+		"iot":            {FallbackIcons: []string{"mdi:access-point", "mdi:wifi", "mdi:bluetooth"}, BgColor: "#E6F5E0", Keywords: []string{"iot", "esp", "arduino", "raspberry"}},
+		"os":             {FallbackIcons: []string{"mdi:desktop-classic", "mdi:linux", "mdi:microsoft-windows"}, BgColor: "#F0F0F0", Keywords: []string{"os", "linux", "windows"}},
+		"browser":        {FallbackIcons: []string{"mdi:web", "mdi:earth", "mdi:application"}, BgColor: "#FDE8D0", Keywords: []string{"browser", "chrome", "firefox"}},
+		"gaming":         {FallbackIcons: []string{"mdi:gamepad", "mdi:joystick", "mdi:television"}, BgColor: "#F0F0F0", Keywords: []string{"game", "steam", "twitch"}},
 		"dashboard":      {FallbackIcons: []string{"mdi:view-dashboard", "mdi:application", "mdi:grid"}, BgColor: "#E6F5E0", IconColor: "#4CAF50", Keywords: []string{"dashboard", "homepage"}},
 		"social":         {FallbackIcons: []string{"mdi:account-group", "mdi:web", "mdi:share"}, BgColor: "#E3F2FD", IconColor: "#26A5E4", Keywords: []string{"social", "twitter", "facebook"}},
-		"default":        {FallbackIcons: []string{"mdi:server", "mdi:application", "mdi:help-circle"}, BgColor: "", IconColor: "", Keywords: []string{}},
+		"default":        {FallbackIcons: []string{"mdi:server", "mdi:application", "mdi:help-circle"}, Keywords: []string{}},
 	}
 	for k, v := range defs {
 		c := v
@@ -279,7 +280,6 @@ func (r *IconResolver) initDefaultCategories() {
 func (r *IconResolver) buildIndices() {
 	docCount := float64(len(r.entries))
 	tokenDF := make(map[string]int)
-
 	for _, e := range r.entries {
 		tokenSet := make(map[string]struct{})
 		addTokens := func(s string) {
@@ -391,7 +391,6 @@ func (r *IconResolver) ResolveIconCDN(name, explicitIcon string) string {
 	if v, ok := r.cdnCache.Load(cacheKey); ok {
 		return v.(string)
 	}
-
 	icon := strings.TrimSpace(r.ResolveIcon(name, explicitIcon))
 	if strings.HasPrefix(icon, "http://") || strings.HasPrefix(icon, "https://") || strings.HasPrefix(icon, "data:") {
 		r.cdnCache.Store(cacheKey, icon)
@@ -409,7 +408,7 @@ func (r *IconResolver) ResolveIconCDN(name, explicitIcon string) string {
 	iconName := strings.ToLower(strings.TrimSpace(icon[sep+1:]))
 
 	color := strings.TrimSpace(r.ResolveIconColor(name))
-	color = strings.TrimPrefix(color, "#") // <-- убираем # без пробела
+	color = strings.TrimPrefix(color, "#")
 	if color == "" {
 		color = "1f2328"
 	}
@@ -417,7 +416,7 @@ func (r *IconResolver) ResolveIconCDN(name, explicitIcon string) string {
 	u := strings.TrimSpace(r.cdnTemplate)
 	u = strings.ReplaceAll(u, "{collection}", url.PathEscape(collection))
 	u = strings.ReplaceAll(u, "{icon}", url.PathEscape(iconName))
-	u = strings.ReplaceAll(u, "{color}", color) // <-- теперь чистый HEX
+	u = strings.ReplaceAll(u, "{color}", color)
 
 	r.cdnCache.Store(cacheKey, u)
 	return u
@@ -429,6 +428,7 @@ func (r *IconResolver) ClearCache() {
 	r.categoryCache = sync.Map{}
 	r.cdnCache = sync.Map{}
 	r.svgCache = sync.Map{}
+	r.colorCache = sync.Map{}
 }
 
 // findEntry выполняет поиск наиболее подходящего entry для нормализованного имени.
@@ -436,20 +436,14 @@ func (r *IconResolver) findEntry(normalized string) *iconEntry {
 	if normalized == "" {
 		return nil
 	}
-
-	// 1. Точное совпадение по ключу
 	if e, ok := r.iconMap[normalized]; ok {
 		return e
 	}
-
-	// 2. Псевдоним
 	if alias, ok := r.aliases[normalized]; ok {
 		if e, ok := r.iconMap[alias]; ok {
 			return e
 		}
 	}
-
-	// 3. Поиск по search-терминам (точное совпадение)
 	for _, e := range r.entries {
 		for _, st := range e.SearchTerms {
 			if r.normalizeName(st) == normalized {
@@ -457,12 +451,11 @@ func (r *IconResolver) findEntry(normalized string) *iconEntry {
 			}
 		}
 	}
-
-	// 4. Ранжированный поиск с IDF и приоритетом
 	queryTokens := strings.Fields(normalized)
 	if len(queryTokens) == 0 {
 		return nil
 	}
+	firstToken := queryTokens[0]
 
 	type scored struct {
 		entry *iconEntry
@@ -473,9 +466,16 @@ func (r *IconResolver) findEntry(normalized string) *iconEntry {
 	for _, e := range r.entries {
 		score := 0.0
 
-		// Префикс ключа
+		// Приоритет первого слова
+		for _, et := range e.Tokens {
+			if et == firstToken {
+				score += 10.0
+				break
+			}
+		}
+
 		if strings.HasPrefix(e.Key, normalized) {
-			score += 10.0
+			score += 5.0
 		}
 
 		entryTokens := e.Tokens
@@ -484,10 +484,13 @@ func (r *IconResolver) findEntry(normalized string) *iconEntry {
 		}
 
 		intersection := 0.0
-		for _, qt := range queryTokens {
+		for i, qt := range queryTokens {
 			for _, et := range entryTokens {
 				if qt == et {
 					idf := r.tokenDF[qt]
+					if i == 0 {
+						idf *= 1.5 // Усиленное первое слово
+					}
 					intersection += idf
 					break
 				}
@@ -512,7 +515,6 @@ func (r *IconResolver) findEntry(normalized string) *iconEntry {
 	if len(candidates) == 0 {
 		return nil
 	}
-
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].score > candidates[j].score
 	})
@@ -581,31 +583,91 @@ func (r *IconResolver) selectFallbackIconColor(normalized string) string {
 	return ""
 }
 
-// generatePastelColor генерирует пастельный цвет на основе строки.
+// generatePastelColor генерирует детерминированный пастельный цвет (HSL + Golden Angle + кэш)
 func (r *IconResolver) generatePastelColor(s string) string {
 	if s == "" {
 		return r.defaultBg
 	}
-	h := int(r.fnvHash(s) % 360)
-	c := r.pastelVal * r.pastelSat
-	x := c * (1 - math.Abs(float64((h%60)-30))/30.0)
-	m := r.pastelVal - c
-	var r1, g1, b1 float64
-	switch {
-	case h < 60:
-		r1, g1, b1 = c, x, 0
-	case h < 120:
-		r1, g1, b1 = x, c, 0
-	case h < 180:
-		r1, g1, b1 = 0, c, x
-	case h < 240:
-		r1, g1, b1 = 0, x, c
-	case h < 300:
-		r1, g1, b1 = x, 0, c
-	default:
-		r1, g1, b1 = c, 0, x
+	if cached, ok := r.colorCache.Load(s); ok {
+		return cached.(string)
 	}
-	return fmt.Sprintf("#%02X%02X%02X", uint8((r1+m)*255), uint8((g1+m)*255), uint8((b1+m)*255))
+
+	hash := r.fnvHash(s)
+	h := math.Mod(float64(hash)*r.goldenAngle, 360.0) // ← исправлено
+
+	r1, g1, b1 := hslToRgb(h/360.0, r.pastelSat, r.pastelVal)
+	color := fmt.Sprintf("#%02X%02X%02X", uint8(r1*255), uint8(g1*255), uint8(b1*255))
+
+	r.colorCache.Store(s, color)
+	return color
+}
+
+// GetServiceColors возвращает фон и контрастный цвет текста с учётом яркости (WCAG)
+func (r *IconResolver) GetServiceColors(s string) (bg, fg string) {
+	bg = r.generatePastelColor(s)
+	if calculateLuminance(bg) > 0.65 {
+		fg = "#1f2328" // тёмный текст на светлом фоне
+	} else {
+		fg = "#ffffff" // белый текст на тёмном фоне
+	}
+	return bg, fg
+}
+
+// hslToRgb конвертирует HSL (0–1) в RGB (0–1)
+func hslToRgb(h, s, l float64) (r, g, b float64) {
+	if s == 0 {
+		return l, l, l
+	}
+	var q float64
+	if l < 0.5 {
+		q = l * (1.0 + s)
+	} else {
+		q = l + s - l*s
+	}
+	p := 2.0*l - q
+	return hueToRgb(p, q, h+1.0/3.0), hueToRgb(p, q, h), hueToRgb(p, q, h-1.0/3.0)
+}
+
+func hueToRgb(p, q, t float64) float64 {
+	if t < 0 {
+		t += 1
+	}
+	if t > 1 {
+		t -= 1
+	}
+	if t < 1.0/6.0 {
+		return p + (q-p)*6.0*t
+	}
+	if t < 0.5 {
+		return q
+	}
+	if t < 2.0/3.0 {
+		return p + (q-p)*(2.0/3.0-t)*6.0
+	}
+	return p
+}
+
+// calculateLuminance считает относительную яркость цвета (WCAG 2.1)
+func calculateLuminance(hex string) float64 {
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) != 6 {
+		return 0.5
+	}
+	var rgb uint32
+	fmt.Sscanf(hex, "%x", &rgb)
+
+	toLinear := func(c uint8) float64 {
+		v := float64(c) / 255.0
+		if v <= 0.03928 {
+			return v / 12.92
+		}
+		return math.Pow((v+0.055)/1.055, 2.4)
+	}
+
+	r := toLinear(byte(rgb >> 16))
+	g := toLinear(byte((rgb >> 8) & 0xFF))
+	b := toLinear(byte(rgb & 0xFF))
+	return 0.2126*r + 0.7152*g + 0.0722*b
 }
 
 // getCachedFallbackSVG возвращает data:URI заглушки в виде буквы.
@@ -623,13 +685,10 @@ func (r *IconResolver) getCachedFallbackSVG(name string) string {
 }
 
 func (r *IconResolver) generateFallbackSVGForChar(char string) string {
-	// гарантированно убираем возможные символы #
-	bg := strings.TrimPrefix(r.svgBgColor, "#")
-	fg := strings.TrimPrefix(r.svgTextColor, "#")
 	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="%s" width="40" height="40">
-        <rect width="40" height="40" rx="8" fill="#%s"/>
-        <text x="20" y="28" text-anchor="middle" font-size="%d" font-family="%s" fill="#%s">%s</text>
-    </svg>`, r.svgViewBox, bg, r.svgFontSize, r.svgFontFamily, fg, char)
+<rect width="40" height="40" rx="8" fill="#%s"/>
+<text x="20" y="28" text-anchor="middle" font-size="%d" font-family="%s" fill="#%s">%s</text>
+</svg>`, r.svgViewBox, r.svgBgColor, r.svgFontSize, r.svgFontFamily, r.svgTextColor, char)
 	return "data:image/svg+xml;charset=utf-8;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
 }
 

@@ -177,7 +177,7 @@ func initHTTPTransports() {
 }
 
 // getHTTPTransport returns the secure HTTP transport for maintenance
-func getHTTPTransport() interface{ CloseIdleConnections() } {
+func getHTTPTransport() *http.Transport {
 	return transportSecure
 }
 
