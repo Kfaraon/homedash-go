@@ -50,7 +50,6 @@
                                  alt=""
                                  loading="lazy"
                                  decoding="async"
-                                 onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%236c5ce7%22/%3E%3Ctext x=%2220%22 y=%2226%22 text-anchor=%22middle%22 font-size=%2218%22 font-family=%22system-ui%22 fill=%22white%22%3E%E2%9A%A1%3C/text%3E%3C/svg%3E'"
                             />
                         </div>
                         <span class="service-name">{{.Name}}</span>
@@ -110,18 +109,16 @@
             setThemeIcon(dark);
         }
 
-        // Синхронизируем при загрузке
         const isDark = document.documentElement.classList.contains('dark-theme');
         if (isDark) document.body.classList.add('dark-theme');
         setThemeIcon(isDark);
 
-        // Делегирование — гарантированная регистрация
         document.addEventListener('click', function(e) {
             const btn = e.target.closest('#themeToggle');
             if (btn) { e.preventDefault(); toggleTheme(); }
         });
 
-        /* ── Adaptive polling с debounce ── */
+        /* ── Adaptive polling ── */
         const BASE_POLL_MS = 5000;
         const MAX_POLL_MS = 30000;
         const MIN_POLL_MS = 2000;
@@ -137,53 +134,37 @@
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
 
-                let anyOk = false, anyFail = false;
-
                 Object.entries(data.services).forEach(([name, st]) => {
                     const card = document.querySelector(`.service-card[data-service-name="${name}"]`);
                     if (!card) return;
-
                     card.querySelectorAll('.status-icons > span').forEach(span => {
                         const type = span.dataset.checkType;
                         if (!type) return;
                         const val = st[type];
                         span.classList.remove('check-ok', 'check-fail', 'check-unknown');
-                        if (val === true)       { span.classList.add('check-ok');   anyOk = true; }
-                        else if (val === false) { span.classList.add('check-fail'); anyFail = true; }
-                        else                    { span.classList.add('check-unknown'); }
+                        if (val === true)       span.classList.add('check-ok');
+                        else if (val === false) span.classList.add('check-fail');
+                        else                    span.classList.add('check-unknown');
                     });
                 });
 
                 fetchErrorCount = 0;
                 consecutiveSuccess++;
-
-                // Adaptive polling: уменьшаем интервал при успехах
                 if (consecutiveSuccess > 3 && currentPollMs > MIN_POLL_MS) {
                     currentPollMs = Math.max(MIN_POLL_MS, currentPollMs - 500);
                 }
-
-                const duration = performance.now() - startTime;
-                console.debug(`[homedash] fetch ok (${duration.toFixed(0)}ms, next in ${(currentPollMs/1000).toFixed(1)}s)`);
-
             } catch (err) {
                 console.warn('[homedash] fetch error:', err);
                 fetchErrorCount++;
                 consecutiveSuccess = 0;
-
-                // Adaptive backoff: увеличиваем интервал при ошибках
                 if (fetchErrorCount > 2) {
                     currentPollMs = Math.min(MAX_POLL_MS, currentPollMs * 1.5);
                 }
             }
-
-            // Schedule next poll with adaptive delay
             pollTimer = setTimeout(fetchStatuses, currentPollMs);
         }
 
-        // Start polling
         fetchStatuses();
-
-        // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
             if (pollTimer) clearTimeout(pollTimer);
         });
@@ -195,22 +176,75 @@
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const ip = await res.text();
                 const el = document.getElementById('wan-ip');
-                if (el) {
-                    el.textContent = `wan адрес: ${ip.trim()}`;
-                }
+                if (el) el.textContent = `wan адрес: ${ip.trim()}`;
             } catch (err) {
                 console.warn('[homedash] wan ip fetch error:', err);
                 const el = document.getElementById('wan-ip');
-                if (el) {
-                    el.textContent = 'wan адрес: недоступен';
-                }
+                if (el) el.textContent = 'wan адрес: недоступен';
             }
         }
-
-        // Fetch WAN IP after page load
         fetchWanIp();
-        // Refresh WAN IP every 5 minutes
         setInterval(fetchWanIp, 5 * 60 * 1000);
+
+        /* ========== ИКОНКИ: умный fallback без поломки оригинальных URL ========== */
+        function generateFallbackSVG(serviceName, bgColor) {
+            const letter = serviceName.charAt(0).toUpperCase();
+            let color = bgColor;
+            if (color && !color.startsWith('#')) color = '#' + color;
+            if (!color || color === '#') color = '#6c5ce7';
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+                <rect width="40" height="40" rx="8" fill="${color}"/>
+                <text x="20" y="26" text-anchor="middle" font-size="20" font-family="system-ui, sans-serif" fill="#ffffff">${letter}</text>
+            </svg>`;
+            return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        }
+
+        function setupIcon(img) {
+            const card = img.closest('.service-card');
+            if (!card) return;
+            const serviceName = card.getAttribute('data-service-name') || '?';
+            const iconBubble = img.closest('.icon-bubble');
+            let bgColor = iconBubble ? iconBubble.style.backgroundColor : '#6c5ce7';
+            if (bgColor && bgColor.startsWith('rgb')) {
+                const match = bgColor.match(/\d+/g);
+                if (match) {
+                    bgColor = '#' + match.slice(0,3).map(x => parseInt(x).toString(16).padStart(2,'0')).join('');
+                }
+            }
+
+            // Если src пустой или уже data:image — сразу заглушка
+            const originalSrc = img.getAttribute('src');
+            if (!originalSrc || originalSrc.startsWith('data:')) {
+                img.src = generateFallbackSVG(serviceName, bgColor);
+                return;
+            }
+
+            let retry = false;
+            img.onerror = () => {
+                if (retry) {
+                    // Вторая ошибка — окончательная заглушка
+                    img.src = generateFallbackSVG(serviceName, bgColor);
+                } else {
+                    retry = true;
+                    // Первая ошибка: пробуем перезагрузить с cache-buster
+                    const separator = originalSrc.includes('?') ? '&' : '?';
+                    img.src = originalSrc + separator + '_cb=' + Date.now();
+                }
+            };
+        }
+
+        function initIcons() {
+            document.querySelectorAll('.service-icon-img').forEach(img => setupIcon(img));
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initIcons);
+        } else {
+            initIcons();
+        }
+        // Наблюдатель для динамически добавляемых карточек
+        const iconObserver = new MutationObserver(() => initIcons());
+        iconObserver.observe(document.body, { childList: true, subtree: true });
     })();
     </script>
 </body>
