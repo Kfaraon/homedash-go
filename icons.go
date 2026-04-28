@@ -1,306 +1,543 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"html"
+	"log/slog"
+	"math"
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
 
-// ─── Типы и константы ─────────────────────────────────────────────────────────
-
-// Category объединяет информацию о категории сервисов.
+// Category описывает fallback-поведение для категории сервисов.
 type Category struct {
-	Name          string   // идентификатор категории
-	FallbackIcons []string // список иконок для fallback (приоритет по порядку)
-	BgColor       string   // цвет фона для категории
-	IconColor     string   // цвет иконки для категории
+	FallbackIcons []string `json:"fallback_icons"`
+	BgColor       string   `json:"bg_color"`
+	IconColor     string   `json:"icon_color"`
+	Keywords      []string `json:"keywords"`
 }
 
-// iconEntry описывает иконку и её стили.
+// iconEntry представляет один загруженный сервис со всей метаинформацией.
 type iconEntry struct {
-	Icon      string
-	BgColor   string
-	IconColor string
-	Category  string // ссылка на категорию (название)
-	KeyLen    int    // длина оригинального ключа (для оптимизации ранжирования)
+	Key         string
+	Icon        string
+	BgColor     string
+	IconColor   string
+	Category    string
+	Priority    int
+	SearchTerms []string
+	Tokens      []string // все токены (ключ + search terms)
 }
 
-// IconResolver отвечает за подбор иконок по имени сервиса.
+// IconResolver отвечает за поиск иконок, цветов и CDN-ссылок.
 type IconResolver struct {
-	iconMap       map[string]iconEntry
-	iconAliases   map[string]string
-	tokenIndex    map[string][]*iconEntry
-	cache         sync.Map             // нормализованное имя -> *iconEntry
-	categoryCache sync.Map             // нормализованное имя -> *Category
-	categories    map[string]*Category // name -> Category
-	mu            sync.RWMutex         // для безопасной замены маппингов
+	entries []*iconEntry
+	iconMap map[string]*iconEntry // точный ключ -> entry
+	aliases map[string]string     // алиас -> ключ
+	tokenDF map[string]float64    // IDF вес токенов
+
+	cache         sync.Map
+	categoryCache sync.Map
+	cdnCache      sync.Map
+	svgCache      sync.Map
+
+	categories       map[string]*Category
+	sortedCategories []string
+
+	cdnTemplate  string
+	normRegex    *regexp.Regexp
+	normReplacer *strings.Replacer
+
+	pastelSat float64
+	pastelVal float64
+	defaultBg string
+
+	fallbackIcon  string
+	svgViewBox    string
+	svgBgColor    string
+	svgTextColor  string
+	svgFontSize   int
+	svgFontFamily string
 }
 
-// IconResolverInterface определяет публичный API.
-type IconResolverInterface interface {
-	ResolveIcon(name, explicitIcon string) string
-	ResolveColor(name string) string
-	ResolveIconColor(name string) string
-	ResolveIconCDN(name, explicitIcon string) string
-}
-
-// ─── Конструктор и инициализация ─────────────────────────────────────────────
-
-// NewIconResolver создаёт новый резолвер, загружая правила из JSON-файла.
-// Путь к файлу задаётся переменной окружения ICONS_CONFIG_PATH.
-// Если переменная не задана, используется "data/icons.json".
+// NewIconResolver загружает конфиг из JSON и строит индексы.
 func NewIconResolver() *IconResolver {
 	r := &IconResolver{
-		iconMap:     make(map[string]iconEntry),
-		iconAliases: make(map[string]string),
-		tokenIndex:  make(map[string][]*iconEntry),
-		categories:  make(map[string]*Category),
-	}
-	r.initDefaultCategories()
+		iconMap:    make(map[string]*iconEntry),
+		aliases:    make(map[string]string),
+		categories: make(map[string]*Category),
 
-	// Определяем путь к файлу конфигурации иконок
-	iconsPath := os.Getenv("ICONS_CONFIG_PATH")
-	if iconsPath == "" {
-		iconsPath = "data/icons.json"
+		cdnTemplate:  "https://api.iconify.design/{collection}/{icon}.svg?color={color}",
+		pastelSat:    0.3,
+		pastelVal:    0.9,
+		defaultBg:    "#E3F2FD",
+		fallbackIcon: "mdi:server",
+
+		normRegex:    regexp.MustCompile(`[^a-zа-яё0-9 ]+`),
+		normReplacer: strings.NewReplacer("-", " ", "_", " ", ".", " "),
+
+		svgViewBox:    "0 0 40 40",
+		svgBgColor:    "#E3F2FD",
+		svgTextColor:  "#1f2328",
+		svgFontSize:   22,
+		svgFontFamily: "Arial,sans-serif",
 	}
 
-	if err := r.loadIconsFromJSON(iconsPath); err != nil {
-		// Если файла нет или он повреждён, работаем только с категориями (fallback)
-		// В продакшене можно залогировать предупреждение, но пока игнорируем
-		_ = err
+	path := os.Getenv("ICONS_CONFIG_PATH")
+	if path == "" {
+		path = "data/icons.json"
 	}
+
+	if err := r.loadIconsFromJSON(path); err != nil {
+		slog.Warn("Falling back to default icons", "error", err, "path", path)
+		r.initDefaultCategories()
+	}
+
+	// убираем # из дефолтных цветов
+	r.svgBgColor = strings.TrimPrefix(r.svgBgColor, "#")
+	r.svgTextColor = strings.TrimPrefix(r.svgTextColor, "#")
+	r.defaultBg = strings.TrimPrefix(r.defaultBg, "#")
+
 	r.buildIndices()
+	r.prepareSortedCategories()
 	return r
 }
 
-// loadIconsFromJSON загружает иконки и алиасы из JSON-файла.
-// Формат:
-//
-//	{
-//	  "icons": [
-//	    {"key": "proxmox", "icon": "simple-icons:proxmox", "bg": "#FDE8D0", "color": "#E57000", "category": "virtualization"}
-//	  ],
-//	  "aliases": {"postgres": "postgresql"}
-//	}
+// sanitizeJSON исправляет мелкие проблемы форматирования в JSON.
+func sanitizeJSON(data []byte) []byte {
+	s := string(data)
+	s = regexp.MustCompile(`"([^"]+?)\s*"\s*:`).ReplaceAllString(s, `"${1}":`)
+	s = regexp.MustCompile(`:\s*"([^"]*?)\s*"(,|\s*})`).ReplaceAllString(s, `: "${1}"$2`)
+	s = strings.NewReplacer(
+		`"saturation":`, `"sat":`,
+		`"brightness":`, `"bright":`,
+		`"default_bg":`, `"bg":`,
+		`"replace_chars":`, `"chars":`,
+	).Replace(s)
+	return []byte(s)
+}
+
+// loadIconsFromJSON парсит JSON-конфиг в структуры.
 func (r *IconResolver) loadIconsFromJSON(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
+	data = sanitizeJSON(data)
+
 	var cfg struct {
 		Icons []struct {
-			Key      string `json:"key"`
-			Icon     string `json:"icon"`
-			Bg       string `json:"bg"`
-			Color    string `json:"color"`
-			Category string `json:"category"`
+			Key      string   `json:"key"`
+			Icon     string   `json:"icon"`
+			Bg       string   `json:"bg"`
+			Color    string   `json:"color"`
+			Category string   `json:"category"`
+			Search   []string `json:"search"`
+			Priority int      `json:"priority"`
 		} `json:"icons"`
-		Aliases map[string]string `json:"aliases"`
+		Aliases    map[string]string    `json:"aliases"`
+		Categories map[string]*Category `json:"categories"`
+		Defaults   struct {
+			CDNTemplate  string `json:"cdn_template"`
+			FallbackIcon string `json:"fallback_icon"`
+			Pastel       struct {
+				Sat, Bright float64
+				Bg          string
+			} `json:"pastel_colors"`
+			SVG struct {
+				ViewBox, Bg, Text, FontFamily string
+				Size                          int
+			} `json:"fallback_svg"`
+		} `json:"defaults"`
+		Norm struct {
+			Regex string
+			Chars []string
+		} `json:"normalization"`
 	}
+
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
-	// Очищаем существующие маппинги (если повторно загружаем)
-	r.iconMap = make(map[string]iconEntry)
-	r.iconAliases = make(map[string]string)
 
-	for _, ic := range cfg.Icons {
-		entry := iconEntry{
-			Icon:      ic.Icon,
-			BgColor:   ic.Bg,
-			IconColor: ic.Color,
-			Category:  ic.Category,
-			KeyLen:    len(ic.Key),
-		}
-		r.iconMap[ic.Key] = entry
+	// Алиасы
+	r.aliases = make(map[string]string, len(cfg.Aliases))
+	for k, v := range cfg.Aliases {
+		r.aliases[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}
-	for alias, target := range cfg.Aliases {
-		r.iconAliases[alias] = target
+
+	// Элементы
+	r.entries = make([]*iconEntry, 0, len(cfg.Icons))
+	for _, ic := range cfg.Icons {
+		key := strings.TrimSpace(ic.Key)
+		entry := &iconEntry{
+			Key:         key,
+			Icon:        strings.TrimSpace(ic.Icon),
+			BgColor:     strings.TrimSpace(ic.Bg),
+			IconColor:   strings.TrimSpace(ic.Color),
+			Category:    strings.TrimSpace(ic.Category),
+			Priority:    ic.Priority,
+			SearchTerms: ic.Search,
+		}
+		r.iconMap[key] = entry
+		r.entries = append(r.entries, entry)
+	}
+
+	// Категории
+	if len(cfg.Categories) > 0 {
+		r.categories = make(map[string]*Category, len(cfg.Categories))
+		for k, v := range cfg.Categories {
+			r.categories[strings.TrimSpace(k)] = v
+		}
+	}
+
+	// Настройки по умолчанию
+	if c := strings.TrimSpace(cfg.Defaults.CDNTemplate); c != "" {
+		r.cdnTemplate = c
+	}
+	if c := strings.TrimSpace(cfg.Defaults.FallbackIcon); c != "" {
+		r.fallbackIcon = c
+	}
+	if cfg.Defaults.Pastel.Sat > 0 {
+		r.pastelSat = cfg.Defaults.Pastel.Sat
+	}
+	if cfg.Defaults.Pastel.Bright > 0 {
+		r.pastelVal = cfg.Defaults.Pastel.Bright
+	}
+	if c := strings.TrimSpace(cfg.Defaults.Pastel.Bg); c != "" {
+		r.defaultBg = c
+	}
+	if c := strings.TrimSpace(cfg.Defaults.SVG.ViewBox); c != "" {
+		r.svgViewBox = c
+	}
+	if c := strings.TrimSpace(cfg.Defaults.SVG.Bg); c != "" {
+		r.svgBgColor = c
+	}
+	if c := strings.TrimSpace(cfg.Defaults.SVG.Text); c != "" {
+		r.svgTextColor = c
+	}
+	if cfg.Defaults.SVG.Size > 0 {
+		r.svgFontSize = cfg.Defaults.SVG.Size
+	}
+	if c := strings.TrimSpace(cfg.Defaults.SVG.FontFamily); c != "" {
+		r.svgFontFamily = c
+	}
+	if c := strings.TrimSpace(cfg.Norm.Regex); c != "" {
+		if re, err := regexp.Compile(c); err == nil {
+			r.normRegex = re
+		}
+	}
+	if len(cfg.Norm.Chars) > 0 {
+		args := make([]string, len(cfg.Norm.Chars)*2)
+		for i, ch := range cfg.Norm.Chars {
+			args[i*2] = ch
+			args[i*2+1] = " "
+		}
+		r.normReplacer = strings.NewReplacer(args...)
 	}
 	return nil
 }
 
-// initDefaultCategories определяет стандартные категории (используются для fallback).
+// initDefaultCategories заполняет категории при ошибке загрузки JSON.
 func (r *IconResolver) initDefaultCategories() {
-	categories := []Category{
-		{Name: "db", FallbackIcons: []string{"simple-icons:postgresql", "simple-icons:mysql", "mdi:database"}, BgColor: "#E3F2FD", IconColor: "#336791"},
-		{Name: "web", FallbackIcons: []string{"mdi:web", "mdi:server", "simple-icons:nginx"}, BgColor: "#DFF5E6", IconColor: "#009639"},
-		{Name: "network", FallbackIcons: []string{"mdi:router-wireless", "mdi:lan", "mdi:cloud"}, BgColor: "#E3F2FD", IconColor: "#607080"},
-		{Name: "dns", FallbackIcons: []string{"mdi:dns", "mdi:server-network", "simple-icons:cloudflare"}, BgColor: "#FDE8D0", IconColor: "#F48120"},
-		{Name: "security", FallbackIcons: []string{"mdi:shield", "mdi:lock", "simple-icons:pi-hole"}, BgColor: "#FCE4E4", IconColor: "#96060C"},
-		{Name: "media", FallbackIcons: []string{"mdi:video", "mdi:music", "mdi:television"}, BgColor: "#FDF3D0", IconColor: "#EBAF00"},
-		{Name: "storage", FallbackIcons: []string{"mdi:harddisk", "mdi:nas", "mdi:cloud-outline"}, BgColor: "#D9EDF2", IconColor: "#0082C9"},
-		{Name: "container", FallbackIcons: []string{"mdi:docker", "mdi:cube-outline", "mdi:package-variant"}, BgColor: "#E3F2FD", IconColor: "#2496ED"},
-		{Name: "orchestration", FallbackIcons: []string{"mdi:kubernetes", "mdi:orbit", "mdi:layers"}, BgColor: "#D9EDF2", IconColor: "#326CE5"},
-		{Name: "monitoring", FallbackIcons: []string{"mdi:chart-line", "mdi:eye", "mdi:gauge"}, BgColor: "#FDE8D0", IconColor: "#F46800"},
-		{Name: "smarthome", FallbackIcons: []string{"mdi:home-automation", "mdi:lightbulb", "mdi:home"}, BgColor: "#E3F2FD", IconColor: "#41BDF5"},
-		{Name: "chat", FallbackIcons: []string{"mdi:message", "mdi:chat", "mdi:account-group"}, BgColor: "#E3F2FD", IconColor: "#26A5E4"},
-		{Name: "dev", FallbackIcons: []string{"mdi:code-braces", "mdi:git", "mdi:terminal"}, BgColor: "#E6F5E0", IconColor: "#609926"},
-		{Name: "editor", FallbackIcons: []string{"mdi:file-code", "mdi:pencil", "mdi:note-text"}, BgColor: "#F0F0F0", IconColor: "#7C3AED"},
-		{Name: "virtualization", FallbackIcons: []string{"mdi:server", "mdi:monitor-multiple", "mdi:cpu-64-bit"}, BgColor: "#E3F2FD", IconColor: "#E57000"},
-		{Name: "iot", FallbackIcons: []string{"mdi:access-point", "mdi:wifi", "mdi:bluetooth"}, BgColor: "#E6F5E0", IconColor: ""},
-		{Name: "os", FallbackIcons: []string{"mdi:desktop-classic", "mdi:linux", "mdi:microsoft-windows"}, BgColor: "#F0F0F0", IconColor: ""},
-		{Name: "browser", FallbackIcons: []string{"mdi:web", "mdi:earth", "mdi:application"}, BgColor: "#FDE8D0", IconColor: ""},
-		{Name: "gaming", FallbackIcons: []string{"mdi:gamepad", "mdi:joystick", "mdi:television"}, BgColor: "#F0F0F0", IconColor: ""},
-		{Name: "default", FallbackIcons: []string{"mdi:server", "mdi:application", "mdi:help-circle"}, BgColor: "", IconColor: ""},
+	defs := map[string]Category{
+		"db":             {FallbackIcons: []string{"simple-icons:postgresql", "simple-icons:mysql", "mdi:database"}, BgColor: "#E3F2FD", IconColor: "#336791", Keywords: []string{"database", "sql", "db"}},
+		"web":            {FallbackIcons: []string{"mdi:web", "mdi:server", "simple-icons:nginx"}, BgColor: "#DFF5E6", IconColor: "#009639", Keywords: []string{"web", "http", "nginx", "apache"}},
+		"network":        {FallbackIcons: []string{"mdi:router-wireless", "mdi:lan", "mdi:cloud"}, BgColor: "#E3F2FD", IconColor: "#607080", Keywords: []string{"network", "router", "firewall"}},
+		"dns":            {FallbackIcons: []string{"mdi:dns", "mdi:server-network", "simple-icons:cloudflare"}, BgColor: "#FDE8D0", IconColor: "#F48120", Keywords: []string{"dns"}},
+		"security":       {FallbackIcons: []string{"mdi:shield", "mdi:lock", "simple-icons:pi-hole"}, BgColor: "#FCE4E4", IconColor: "#96060C", Keywords: []string{"security", "vpn", "wireguard"}},
+		"media":          {FallbackIcons: []string{"mdi:video", "mdi:music", "mdi:television"}, BgColor: "#FDF3D0", IconColor: "#EBAF00", Keywords: []string{"media", "video", "music", "stream"}},
+		"storage":        {FallbackIcons: []string{"mdi:harddisk", "mdi:nas", "mdi:cloud-outline"}, BgColor: "#D9EDF2", IconColor: "#0082C9", Keywords: []string{"storage", "nas", "cloud"}},
+		"container":      {FallbackIcons: []string{"mdi:docker", "mdi:cube-outline", "mdi:package-variant"}, BgColor: "#E3F2FD", IconColor: "#2496ED", Keywords: []string{"docker", "container"}},
+		"orchestration":  {FallbackIcons: []string{"mdi:kubernetes", "mdi:orbit", "mdi:layers"}, BgColor: "#D9EDF2", IconColor: "#326CE5", Keywords: []string{"kubernetes", "k8s"}},
+		"monitoring":     {FallbackIcons: []string{"mdi:chart-line", "mdi:eye", "mdi:gauge"}, BgColor: "#FDE8D0", IconColor: "#F46800", Keywords: []string{"monitoring", "metrics", "grafana"}},
+		"smarthome":      {FallbackIcons: []string{"mdi:home-automation", "mdi:lightbulb", "mdi:home"}, BgColor: "#E3F2FD", IconColor: "#41BDF5", Keywords: []string{"smarthome", "home automation"}},
+		"chat":           {FallbackIcons: []string{"mdi:message", "mdi:chat", "mdi:account-group"}, BgColor: "#E3F2FD", IconColor: "#26A5E4", Keywords: []string{"chat", "message", "telegram"}},
+		"dev":            {FallbackIcons: []string{"mdi:code-braces", "mdi:git", "mdi:terminal"}, BgColor: "#E6F5E0", IconColor: "#609926", Keywords: []string{"dev", "git", "code"}},
+		"editor":         {FallbackIcons: []string{"mdi:file-code", "mdi:pencil", "mdi:note-text"}, BgColor: "#F0F0F0", IconColor: "#7C3AED", Keywords: []string{"editor", "text"}},
+		"virtualization": {FallbackIcons: []string{"mdi:server", "mdi:monitor-multiple", "mdi:cpu-64-bit"}, BgColor: "#E3F2FD", IconColor: "#E57000", Keywords: []string{"virtual", "vm", "proxmox"}},
+		"iot":            {FallbackIcons: []string{"mdi:access-point", "mdi:wifi", "mdi:bluetooth"}, BgColor: "#E6F5E0", IconColor: "", Keywords: []string{"iot", "esp", "arduino", "raspberry"}},
+		"os":             {FallbackIcons: []string{"mdi:desktop-classic", "mdi:linux", "mdi:microsoft-windows"}, BgColor: "#F0F0F0", IconColor: "", Keywords: []string{"os", "linux", "windows"}},
+		"browser":        {FallbackIcons: []string{"mdi:web", "mdi:earth", "mdi:application"}, BgColor: "#FDE8D0", IconColor: "", Keywords: []string{"browser", "chrome", "firefox"}},
+		"gaming":         {FallbackIcons: []string{"mdi:gamepad", "mdi:joystick", "mdi:television"}, BgColor: "#F0F0F0", IconColor: "", Keywords: []string{"game", "steam", "twitch"}},
+		"dashboard":      {FallbackIcons: []string{"mdi:view-dashboard", "mdi:application", "mdi:grid"}, BgColor: "#E6F5E0", IconColor: "#4CAF50", Keywords: []string{"dashboard", "homepage"}},
+		"social":         {FallbackIcons: []string{"mdi:account-group", "mdi:web", "mdi:share"}, BgColor: "#E3F2FD", IconColor: "#26A5E4", Keywords: []string{"social", "twitter", "facebook"}},
+		"default":        {FallbackIcons: []string{"mdi:server", "mdi:application", "mdi:help-circle"}, BgColor: "", IconColor: "", Keywords: []string{}},
 	}
-	for _, cat := range categories {
-		c := cat
-		r.categories[cat.Name] = &c
+	for k, v := range defs {
+		c := v
+		r.categories[k] = &c
 	}
 }
 
-// buildIndices строит инвертированный индекс токенов.
+// buildIndices строит инвертированный индекс и вычисляет IDF для токенов.
 func (r *IconResolver) buildIndices() {
-	r.tokenIndex = make(map[string][]*iconEntry)
-	for key, entry := range r.iconMap {
-		entryCopy := entry
-		for _, token := range tokenize(key) {
-			r.tokenIndex[token] = append(r.tokenIndex[token], &entryCopy)
+	docCount := float64(len(r.entries))
+	tokenDF := make(map[string]int)
+
+	for _, e := range r.entries {
+		tokenSet := make(map[string]struct{})
+		addTokens := func(s string) {
+			for _, t := range strings.Fields(s) {
+				tokenSet[t] = struct{}{}
+			}
+		}
+		addTokens(r.normalizeName(e.Key))
+		for _, st := range e.SearchTerms {
+			addTokens(r.normalizeName(st))
+		}
+		e.Tokens = make([]string, 0, len(tokenSet))
+		for t := range tokenSet {
+			e.Tokens = append(e.Tokens, t)
+			tokenDF[t]++
+		}
+	}
+
+	r.tokenDF = make(map[string]float64, len(tokenDF))
+	for t, df := range tokenDF {
+		if df > 0 {
+			r.tokenDF[t] = math.Log(docCount / float64(df))
+		} else {
+			r.tokenDF[t] = 0
 		}
 	}
 }
 
-// ─── Публичные методы резолвера ───────────────────────────────────────────────
+// prepareSortedCategories готовит список категорий, отсортированный по длине ключа (для детекции).
+func (r *IconResolver) prepareSortedCategories() {
+	keys := make([]string, 0, len(r.categories))
+	for k := range r.categories {
+		if k != "default" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	r.sortedCategories = keys
+}
 
-// ResolveIcon возвращает идентификатор иконки.
+// ResolveIcon возвращает строку иконки (например "simple-icons:nginx") по имени сервиса.
 func (r *IconResolver) ResolveIcon(name, explicitIcon string) string {
 	if explicitIcon != "" {
 		return explicitIcon
 	}
-	normalized := normalizeName(name)
-	if entry := r.cachedFindEntry(normalized); entry != nil {
-		return entry.Icon
+	n := r.normalizeName(name)
+	if v, ok := r.cache.Load(n); ok {
+		return v.(*iconEntry).Icon
 	}
-	return r.selectFallbackIcon(normalized)
+	if e := r.findEntry(n); e != nil {
+		r.cache.Store(n, e)
+		return e.Icon
+	}
+	return r.selectFallbackIcon(n)
 }
 
 // ResolveColor возвращает цвет фона для иконки.
 func (r *IconResolver) ResolveColor(name string) string {
-	normalized := normalizeName(name)
-	if entry := r.cachedFindEntry(normalized); entry != nil {
-		if entry.BgColor != "" {
-			return entry.BgColor
+	n := r.normalizeName(name)
+	if v, ok := r.cache.Load(n); ok {
+		e := v.(*iconEntry)
+		if e.BgColor != "" {
+			return e.BgColor
 		}
-		if cat, ok := r.categories[entry.Category]; ok && cat.BgColor != "" {
-			return cat.BgColor
+		if c, ok := r.categories[e.Category]; ok && c.BgColor != "" {
+			return c.BgColor
 		}
 	}
-	return r.selectFallbackColor(normalized)
+	if e := r.findEntry(n); e != nil {
+		r.cache.Store(n, e)
+		if e.BgColor != "" {
+			return e.BgColor
+		}
+		if c, ok := r.categories[e.Category]; ok && c.BgColor != "" {
+			return c.BgColor
+		}
+	}
+	return r.selectFallbackColor(n)
 }
 
-// ResolveIconColor возвращает цвет иконки.
+// ResolveIconColor возвращает цвет самой иконки.
 func (r *IconResolver) ResolveIconColor(name string) string {
-	normalized := normalizeName(name)
-	if entry := r.cachedFindEntry(normalized); entry != nil {
-		if entry.IconColor != "" {
-			return entry.IconColor
+	n := r.normalizeName(name)
+	if v, ok := r.cache.Load(n); ok {
+		e := v.(*iconEntry)
+		if e.IconColor != "" {
+			return e.IconColor
 		}
-		if cat, ok := r.categories[entry.Category]; ok && cat.IconColor != "" {
-			return cat.IconColor
+		if c, ok := r.categories[e.Category]; ok && c.IconColor != "" {
+			return c.IconColor
 		}
 	}
-	return r.selectFallbackIconColor(normalized)
+	if e := r.findEntry(n); e != nil {
+		r.cache.Store(n, e)
+		if e.IconColor != "" {
+			return e.IconColor
+		}
+		if c, ok := r.categories[e.Category]; ok && c.IconColor != "" {
+			return c.IconColor
+		}
+	}
+	return r.selectFallbackIconColor(n)
 }
 
-// ResolveIconCDN формирует URL для иконки через Iconify CDN.
+// ResolveIconCDN формирует полный URL или data:URI для отображения иконки.
 func (r *IconResolver) ResolveIconCDN(name, explicitIcon string) string {
-	icon := r.ResolveIcon(name, explicitIcon)
-	if strings.HasPrefix(icon, "http://") || strings.HasPrefix(icon, "https://") {
+	n := r.normalizeName(name)
+	cacheKey := n + "|" + explicitIcon
+	if v, ok := r.cdnCache.Load(cacheKey); ok {
+		return v.(string)
+	}
+
+	icon := strings.TrimSpace(r.ResolveIcon(name, explicitIcon))
+	if strings.HasPrefix(icon, "http://") || strings.HasPrefix(icon, "https://") || strings.HasPrefix(icon, "data:") {
+		r.cdnCache.Store(cacheKey, icon)
 		return icon
 	}
-	// Безопасная проверка формата "prefix:name"
-	parts := strings.SplitN(icon, ":", 2)
-	if len(parts) != 2 {
-		return r.generateFallbackSVG(name)
+
+	sep := strings.IndexByte(icon, ':')
+	if sep == -1 {
+		res := r.getCachedFallbackSVG(name)
+		r.cdnCache.Store(cacheKey, res)
+		return res
 	}
-	base := fmt.Sprintf("https://api.iconify.design/%s/%s.svg",
-		url.PathEscape(parts[0]), url.PathEscape(parts[1]))
-	brandColor := r.ResolveIconColor(name)
-	if brandColor == "" {
-		return base
+
+	collection := strings.ToLower(strings.TrimSpace(icon[:sep]))
+	iconName := strings.ToLower(strings.TrimSpace(icon[sep+1:]))
+
+	color := strings.TrimSpace(r.ResolveIconColor(name))
+	color = strings.TrimPrefix(color, "#") // <-- убираем # без пробела
+	if color == "" {
+		color = "1f2328"
 	}
-	return base + "?color=" + url.QueryEscape(brandColor)
+
+	u := strings.TrimSpace(r.cdnTemplate)
+	u = strings.ReplaceAll(u, "{collection}", url.PathEscape(collection))
+	u = strings.ReplaceAll(u, "{icon}", url.PathEscape(iconName))
+	u = strings.ReplaceAll(u, "{color}", color) // <-- теперь чистый HEX
+
+	r.cdnCache.Store(cacheKey, u)
+	return u
 }
 
-// ClearCache очищает внутренний кэш сопоставлений нормализованных имён и иконок.
+// ClearCache очищает все внутренние кэши.
 func (r *IconResolver) ClearCache() {
-	r.cache.Range(func(key, value interface{}) bool {
-		r.cache.Delete(key)
-		return true
-	})
-	r.categoryCache.Range(func(key, value interface{}) bool {
-		r.categoryCache.Delete(key)
-		return true
-	})
+	r.cache = sync.Map{}
+	r.categoryCache = sync.Map{}
+	r.cdnCache = sync.Map{}
+	r.svgCache = sync.Map{}
 }
 
-// ─── Внутренние методы поиска ─────────────────────────────────────────────────
-
-// cachedFindEntry находит entry, используя кэш.
-func (r *IconResolver) cachedFindEntry(normalized string) *iconEntry {
-	if val, ok := r.cache.Load(normalized); ok {
-		return val.(*iconEntry)
-	}
-	entry := r.findEntry(normalized)
-	if entry != nil {
-		r.cache.Store(normalized, entry)
-	}
-	return entry
-}
-
-// findEntry ищет подходящий iconEntry без использования глобального кэша.
+// findEntry выполняет поиск наиболее подходящего entry для нормализованного имени.
 func (r *IconResolver) findEntry(normalized string) *iconEntry {
-	// 1. Алиас
-	if alias, ok := r.iconAliases[normalized]; ok {
-		if e, exists := r.iconMap[alias]; exists {
-			return &e
+	if normalized == "" {
+		return nil
+	}
+
+	// 1. Точное совпадение по ключу
+	if e, ok := r.iconMap[normalized]; ok {
+		return e
+	}
+
+	// 2. Псевдоним
+	if alias, ok := r.aliases[normalized]; ok {
+		if e, ok := r.iconMap[alias]; ok {
+			return e
 		}
 	}
-	// 2. Точное совпадение
-	if e, exists := r.iconMap[normalized]; exists {
-		return &e
-	}
-	// 3. Поиск по токенам через инвертированный индекс
-	tokens := tokenize(normalized)
-	if len(tokens) > 0 {
-		candidates := make(map[*iconEntry]int)
-		for _, token := range tokens {
-			for _, e := range r.tokenIndex[token] {
-				candidates[e]++
+
+	// 3. Поиск по search-терминам (точное совпадение)
+	for _, e := range r.entries {
+		for _, st := range e.SearchTerms {
+			if r.normalizeName(st) == normalized {
+				return e
 			}
 		}
-		var best *iconEntry
-		bestScore := 0
-		for e, cnt := range candidates {
-			score := cnt*100 + e.KeyLen
-			if score > bestScore {
-				bestScore = score
-				best = e
+	}
+
+	// 4. Ранжированный поиск с IDF и приоритетом
+	queryTokens := strings.Fields(normalized)
+	if len(queryTokens) == 0 {
+		return nil
+	}
+
+	type scored struct {
+		entry *iconEntry
+		score float64
+	}
+	var candidates []scored
+
+	for _, e := range r.entries {
+		score := 0.0
+
+		// Префикс ключа
+		if strings.HasPrefix(e.Key, normalized) {
+			score += 10.0
+		}
+
+		entryTokens := e.Tokens
+		if len(entryTokens) == 0 {
+			continue
+		}
+
+		intersection := 0.0
+		for _, qt := range queryTokens {
+			for _, et := range entryTokens {
+				if qt == et {
+					idf := r.tokenDF[qt]
+					intersection += idf
+					break
+				}
 			}
 		}
-		if best != nil {
-			return best
+
+		if intersection > 0 {
+			extra := float64(len(entryTokens) - len(queryTokens))
+			if extra < 0 {
+				extra = 0
+			}
+			score += intersection / (1.0 + extra*0.5)
+		}
+
+		score += float64(e.Priority)
+
+		if score > 0 {
+			candidates = append(candidates, scored{e, score})
 		}
 	}
-	return nil
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
+	return candidates[0].entry
 }
 
-// detectCategory определяет категорию на основе токенов нормализованного имени.
+// detectCategory определяет категорию по нормализованному имени.
 func (r *IconResolver) detectCategory(normalized string) *Category {
-	tokens := tokenize(normalized)
-	for _, token := range tokens {
-		for catName, cat := range r.categories {
-			if catName == "default" {
-				continue
-			}
-			if strings.Contains(token, catName) || strings.Contains(catName, token) {
+	if normalized == "" {
+		return r.categories["default"]
+	}
+	// Сначала точное совпадение имени категории
+	for _, catKey := range r.sortedCategories {
+		if strings.Contains(normalized, catKey) || strings.Contains(catKey, normalized) {
+			return r.categories[catKey]
+		}
+	}
+	// Затем поиск по ключевым словам
+	for _, catKey := range r.sortedCategories {
+		cat := r.categories[catKey]
+		if cat == nil {
+			continue
+		}
+		for _, kw := range cat.Keywords {
+			if kw != "" && strings.Contains(normalized, kw) {
 				return cat
 			}
 		}
@@ -310,56 +547,49 @@ func (r *IconResolver) detectCategory(normalized string) *Category {
 
 // cachedFindCategory возвращает категорию с кэшированием.
 func (r *IconResolver) cachedFindCategory(normalized string) *Category {
-	if val, ok := r.categoryCache.Load(normalized); ok {
-		return val.(*Category)
+	if v, ok := r.categoryCache.Load(normalized); ok {
+		return v.(*Category)
 	}
-	cat := r.detectCategory(normalized)
-	if cat != nil {
-		r.categoryCache.Store(normalized, cat)
+	c := r.detectCategory(normalized)
+	if c != nil {
+		r.categoryCache.Store(normalized, c)
 	}
-	return cat
+	return c
 }
 
-// selectFallbackIcon подбирает иконку из категории.
+// selectFallbackIcon выбирает fallback-иконку на основе категории.
 func (r *IconResolver) selectFallbackIcon(normalized string) string {
-	cat := r.cachedFindCategory(normalized)
-	if cat != nil && len(cat.FallbackIcons) > 0 {
-		idx := r.fnvHash(normalized) % uint32(len(cat.FallbackIcons))
-		return cat.FallbackIcons[idx]
+	if c := r.cachedFindCategory(normalized); c != nil && len(c.FallbackIcons) > 0 {
+		return c.FallbackIcons[r.fnvHash(normalized)%uint32(len(c.FallbackIcons))]
 	}
-	return "mdi:server"
+	return r.fallbackIcon
 }
 
-// selectFallbackColor подбирает цвет фона на основе категории.
+// selectFallbackColor возвращает цвет фона для fallback.
 func (r *IconResolver) selectFallbackColor(normalized string) string {
-	cat := r.cachedFindCategory(normalized)
-	if cat != nil && cat.BgColor != "" {
-		return cat.BgColor
+	if c := r.cachedFindCategory(normalized); c != nil && c.BgColor != "" {
+		return c.BgColor
 	}
 	return r.generatePastelColor(normalized)
 }
 
-// selectFallbackIconColor подбирает цвет иконки на основе категории.
+// selectFallbackIconColor возвращает цвет иконки для fallback.
 func (r *IconResolver) selectFallbackIconColor(normalized string) string {
-	cat := r.cachedFindCategory(normalized)
-	if cat != nil && cat.IconColor != "" {
-		return cat.IconColor
+	if c := r.cachedFindCategory(normalized); c != nil && c.IconColor != "" {
+		return c.IconColor
 	}
 	return ""
 }
 
-// generatePastelColor генерирует детерминированный пастельный цвет на основе HSV.
+// generatePastelColor генерирует пастельный цвет на основе строки.
 func (r *IconResolver) generatePastelColor(s string) string {
 	if s == "" {
-		return "#E3F2FD"
+		return r.defaultBg
 	}
-	h := r.fnvHash(s) % 360 // Hue 0..359
-	sat := 0.3              // Насыщенность 30%
-	val := 0.9              // Яркость 90%
-	// Преобразование HSV в RGB
-	c := val * sat
-	x := c * (1 - float64((h%60))/60)
-	m := val - c
+	h := int(r.fnvHash(s) % 360)
+	c := r.pastelVal * r.pastelSat
+	x := c * (1 - math.Abs(float64((h%60)-30))/30.0)
+	m := r.pastelVal - c
 	var r1, g1, b1 float64
 	switch {
 	case h < 60:
@@ -375,49 +605,44 @@ func (r *IconResolver) generatePastelColor(s string) string {
 	default:
 		r1, g1, b1 = c, 0, x
 	}
-	r2 := uint8((r1 + m) * 255)
-	g2 := uint8((g1 + m) * 255)
-	b2 := uint8((b1 + m) * 255)
-	return fmt.Sprintf("#%02X%02X%02X", r2, g2, b2)
+	return fmt.Sprintf("#%02X%02X%02X", uint8((r1+m)*255), uint8((g1+m)*255), uint8((b1+m)*255))
 }
 
-// generateFallbackSVG создаёт SVG-картинку с первой буквой имени (data URI).
-func (r *IconResolver) generateFallbackSVG(name string) string {
-	letter := "?"
-	trimmed := strings.TrimSpace(name)
-	if len(trimmed) > 0 {
-		first := strings.ToUpper(trimmed[:1])
-		letter = html.EscapeString(first)
+// getCachedFallbackSVG возвращает data:URI заглушки в виде буквы.
+func (r *IconResolver) getCachedFallbackSVG(name string) string {
+	char := "?"
+	if t := strings.TrimSpace(name); len(t) > 0 {
+		char = strings.ToUpper(t[:1])
 	}
-	escaped := url.QueryEscape(fmt.Sprintf(
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">`+
-			`<rect width="40" height="40" rx="8" fill="#E3F2FD"/>`+
-			`<text x="20" y="28" text-anchor="middle" font-size="22" font-family="Arial,sans-serif" fill="#1f2328">%s</text></svg>`, letter))
-	return "data:image/svg+xml;charset=utf-8," + escaped
+	if v, ok := r.svgCache.Load(char); ok {
+		return v.(string)
+	}
+	svg := r.generateFallbackSVGForChar(char)
+	r.svgCache.Store(char, svg)
+	return svg
 }
 
-// fnvHash – хеш для детерминированного выбора.
+func (r *IconResolver) generateFallbackSVGForChar(char string) string {
+	// гарантированно убираем возможные символы #
+	bg := strings.TrimPrefix(r.svgBgColor, "#")
+	fg := strings.TrimPrefix(r.svgTextColor, "#")
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="%s" width="40" height="40">
+        <rect width="40" height="40" rx="8" fill="#%s"/>
+        <text x="20" y="28" text-anchor="middle" font-size="%d" font-family="%s" fill="#%s">%s</text>
+    </svg>`, r.svgViewBox, bg, r.svgFontSize, r.svgFontFamily, fg, char)
+	return "data:image/svg+xml;charset=utf-8;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
+}
+
 func (r *IconResolver) fnvHash(s string) uint32 {
 	h := fnv.New32a()
 	h.Write([]byte(s))
 	return h.Sum32()
 }
 
-// ─── Вспомогательные функции (без состояния) ─────────────────────────────────
-
-var nameNormalizer = regexp.MustCompile(`[^a-zа-яё0-9 ]+`)
-
-// normalizeName приводит строку к нижнему регистру, заменяет разделители на пробелы, удаляет лишние символы.
-func normalizeName(s string) string {
+// normalizeName приводит имя к нижнему регистру, заменяет разделители и удаляет лишнее.
+func (r *IconResolver) normalizeName(s string) string {
 	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, "-", " ")
-	s = strings.ReplaceAll(s, "_", " ")
-	s = strings.ReplaceAll(s, ".", " ")
-	s = nameNormalizer.ReplaceAllString(s, "")
+	s = r.normReplacer.Replace(s)
+	s = r.normRegex.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
-}
-
-// tokenize разбивает нормализованное имя на слова.
-func tokenize(s string) []string {
-	return strings.Fields(normalizeName(s))
 }

@@ -27,13 +27,13 @@ const maxNameLength = 100
 // validateName checks name for safety and length
 func validateName(name, label string) error {
 	if len(strings.TrimSpace(name)) == 0 {
-		return fmt.Errorf("%s is required", label)
+		return fmt.Errorf("%s обязательно", label)
 	}
 	if len(name) > maxNameLength {
-		return fmt.Errorf("%s must be at most %d characters", label, maxNameLength)
+		return fmt.Errorf("%s должен быть не длиннее %d символов", label, maxNameLength)
 	}
 	if !nameRegex.MatchString(name) {
-		return fmt.Errorf("%s contains invalid characters (only letters, digits, spaces, hyphens, underscores, dots allowed)", label)
+		return fmt.Errorf("%s содержит недопустимые символы (разрешены буквы, цифры, пробелы, дефисы, подчёркивания, точки)", label)
 	}
 	return nil
 }
@@ -45,11 +45,11 @@ func validateURL(u, label string) error {
 	}
 	parsed, err := url.ParseRequestURI(u)
 	if err != nil {
-		return fmt.Errorf("%s is not a valid URL: %w", label, err)
+		return fmt.Errorf("%s не является корректным URL: %w", label, err)
 	}
 	// Проверка на наличие схемы
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("%s must use http or https scheme", label)
+		return fmt.Errorf("%s должен использовать схему http или https", label)
 	}
 	return nil
 }
@@ -60,7 +60,7 @@ func validateIP(ip, label string) error {
 		return nil // IP is optional
 	}
 	if net.ParseIP(ip) == nil {
-		return fmt.Errorf("%s is not a valid IP address", label)
+		return fmt.Errorf("%s не является корректным IP-адресом", label)
 	}
 	return nil
 }
@@ -74,7 +74,7 @@ func (app *App) ServeHome(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := app.HomeTmpl.ExecuteTemplate(w, "home.html", map[string]any{"groups": groups}); err != nil {
 		slog.Error("Template rendering error", "groups_count", len(groups), "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, "Внутренняя ошибка сервера", http.StatusInternalServerError)
 	}
 }
 
@@ -131,7 +131,7 @@ func (app *App) ServeMyIP(w http.ResponseWriter, r *http.Request) {
 	ip, ipType, provider := app.fetchPublicIP(ctx)
 	if ip == "" {
 		app.Metrics.IncrementIPFetchErrors()
-		http.Error(w, "Failed to determine public IP", http.StatusBadGateway)
+		http.Error(w, "Не удалось определить публичный IP-адрес", http.StatusBadGateway)
 		return
 	}
 
@@ -173,7 +173,6 @@ func (app *App) updateIPCache(ip, ipType, provider string) {
 func (app *App) fetchPublicIP(ctx context.Context) (ip, ipType, provider string) {
 	client := getHTTPClient(true)
 
-	// Переименовали переменную цикла: url → providerURL
 	for _, providerURL := range app.IPProviders {
 		select {
 		case <-ctx.Done():
@@ -214,7 +213,6 @@ func (app *App) fetchPublicIP(ctx context.Context) (ip, ipType, provider string)
 			ipType = "ipv4"
 		}
 
-		// Теперь url.Parse работает корректно — это обращение к пакету
 		if u, err := url.Parse(providerURL); err == nil {
 			provider = u.Host
 		} else {
@@ -294,14 +292,14 @@ func (app *App) adminAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		if app.AdminAPIKey == "" {
-			http.Error(w, "Admin panel is disabled. Set ADMIN_API_KEY environment variable to enable.", http.StatusForbidden)
+			http.Error(w, "Панель администратора отключена. Установите переменную окружения ADMIN_API_KEY для включения.", http.StatusForbidden)
 			return
 		}
 
 		auth := r.Header.Get("Authorization")
 		if auth == "" {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="admin"`)
-			http.Error(w, "Authorization required", http.StatusUnauthorized)
+			http.Error(w, "Требуется авторизация", http.StatusUnauthorized)
 			return
 		}
 
@@ -309,7 +307,7 @@ func (app *App) adminAuthMiddleware(next http.Handler) http.Handler {
 		auth = strings.TrimPrefix(auth, "Bearer ")
 
 		if auth != app.AdminAPIKey {
-			http.Error(w, "Invalid API key", http.StatusForbidden)
+			http.Error(w, "Неверный API-ключ", http.StatusForbidden)
 			return
 		}
 
@@ -333,7 +331,7 @@ func (app *App) contentTypeMiddleware(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut {
 			contentType := r.Header.Get("Content-Type")
 			if contentType != "" && !strings.Contains(contentType, "application/json") {
-				http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+				http.Error(w, "Content-Type должен быть application/json", http.StatusUnsupportedMediaType)
 				return
 			}
 		}
@@ -367,7 +365,6 @@ func (app *App) getCachedStatuses(groups []Group) map[string]any {
 
 // refreshCache оставлен для обратной совместимости, но теперь делегирует в refreshCacheIfNeeded
 func (app *App) refreshCache(ctx context.Context, groups []Group) {
-	// Игнорируем входной ctx — используем внутренний с защитой
 	app.refreshCacheIfNeeded()
 }
 
@@ -391,7 +388,7 @@ func (app *App) ServeAdmin(w http.ResponseWriter, r *http.Request) {
 	groupsJSON, err := json.Marshal(groups)
 	if err != nil {
 		slog.Error("Error marshaling admin groups", "error", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		http.Error(w, "Внутренняя ошибка сервера", http.StatusInternalServerError)
 		return
 	}
 
@@ -401,7 +398,7 @@ func (app *App) ServeAdmin(w http.ResponseWriter, r *http.Request) {
 		GroupsJSON: template.JS(groupsJSON),
 	}); err != nil {
 		slog.Error("Admin template rendering error", "groups_count", len(groups), "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, "Внутренняя ошибка сервера", http.StatusInternalServerError)
 	}
 }
 
@@ -425,11 +422,11 @@ func (app *App) apiAdminAddGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Некорректный JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if err := validateName(payload.Name, "Group name"); err != nil {
+	if err := validateName(payload.Name, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -439,7 +436,7 @@ func (app *App) apiAdminAddGroup(w http.ResponseWriter, r *http.Request) {
 	for _, g := range app.State.groups {
 		if strings.EqualFold(g.Name, payload.Name) {
 			app.State.mu.Unlock()
-			http.Error(w, "Group with this name already exists", http.StatusBadRequest)
+			http.Error(w, "Группа с таким именем уже существует", http.StatusBadRequest)
 			return
 		}
 	}
@@ -448,19 +445,18 @@ func (app *App) apiAdminAddGroup(w http.ResponseWriter, r *http.Request) {
 		Name:     payload.Name,
 		Services: []Service{},
 	})
-	// Copy before disk I/O to release lock quickly
 	groupsCopy := app.cloneGroupsLocked()
 	app.State.mu.Unlock()
 
 	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Save error: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"message": "Group added",
+		"message": "Группа добавлена",
 	}); err != nil {
 		slog.Debug("Failed to encode add group response", "error", err)
 	}
@@ -473,11 +469,11 @@ func (app *App) apiAdminDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Некорректный JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if err := validateName(payload.Name, "Group name"); err != nil {
+	if err := validateName(payload.Name, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -496,24 +492,23 @@ func (app *App) apiAdminDeleteGroup(w http.ResponseWriter, r *http.Request) {
 
 	if !found {
 		app.State.mu.Unlock()
-		http.Error(w, "Group not found", http.StatusNotFound)
+		http.Error(w, "Группа не найдена", http.StatusNotFound)
 		return
 	}
 
 	app.State.groups = newGroups
-	// Copy before disk I/O
 	groupsCopy := app.cloneGroupsLocked()
 	app.State.mu.Unlock()
 
 	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Save error: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"message": "Group deleted",
+		"message": "Группа удалена",
 	}); err != nil {
 		slog.Debug("Failed to encode delete group response", "error", err)
 	}
@@ -527,15 +522,15 @@ func (app *App) apiAdminRenameGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Некорректный JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if err := validateName(payload.OldName, "Old group name"); err != nil {
+	if err := validateName(payload.OldName, "Старое название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateName(payload.NewName, "New group name"); err != nil {
+	if err := validateName(payload.NewName, "Новое название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -545,7 +540,7 @@ func (app *App) apiAdminRenameGroup(w http.ResponseWriter, r *http.Request) {
 	for _, g := range app.State.groups {
 		if strings.EqualFold(g.Name, payload.NewName) && !strings.EqualFold(g.Name, payload.OldName) {
 			app.State.mu.Unlock()
-			http.Error(w, "Group with this name already exists", http.StatusBadRequest)
+			http.Error(w, "Группа с таким именем уже существует", http.StatusBadRequest)
 			return
 		}
 	}
@@ -561,23 +556,22 @@ func (app *App) apiAdminRenameGroup(w http.ResponseWriter, r *http.Request) {
 
 	if !found {
 		app.State.mu.Unlock()
-		http.Error(w, "Group not found", http.StatusNotFound)
+		http.Error(w, "Группа не найдена", http.StatusNotFound)
 		return
 	}
 
-	// Copy before disk I/O
 	groupsCopy := app.cloneGroupsLocked()
 	app.State.mu.Unlock()
 
 	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Save error: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"message": "Group renamed",
+		"message": "Группа переименована",
 	}); err != nil {
 		slog.Debug("Failed to encode rename group response", "error", err)
 	}
@@ -593,27 +587,27 @@ func (app *App) apiAdminAddService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Некорректный JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if err := validateName(payload.GroupName, "Group name"); err != nil {
+	if err := validateName(payload.GroupName, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateName(payload.Service.Name, "Service name"); err != nil {
+	if err := validateName(payload.Service.Name, "Название сервиса"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(payload.Service.URL) == "" && strings.TrimSpace(payload.Service.IP) == "" {
-		http.Error(w, "Either URL or IP must be specified", http.StatusBadRequest)
+		http.Error(w, "Необходимо указать URL или IP", http.StatusBadRequest)
 		return
 	}
-	if err := validateURL(payload.Service.URL, "Service URL"); err != nil {
+	if err := validateURL(payload.Service.URL, "URL сервиса"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateIP(payload.Service.IP, "Service IP"); err != nil {
+	if err := validateIP(payload.Service.IP, "IP-адрес сервиса"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -623,24 +617,32 @@ func (app *App) apiAdminAddService(w http.ResponseWriter, r *http.Request) {
 	groupIdx, ok := app.findGroupIndexLocked(payload.GroupName)
 	if !ok {
 		app.State.mu.Unlock()
-		http.Error(w, "Group not found", http.StatusNotFound)
+		http.Error(w, "Группа не найдена", http.StatusNotFound)
 		return
 	}
 
+	// Проверка на дубликат имени сервиса (без учёта регистра)
+	for _, s := range app.State.groups[groupIdx].Services {
+		if strings.EqualFold(s.Name, payload.Service.Name) {
+			app.State.mu.Unlock()
+			http.Error(w, "Сервис с таким именем уже существует в группе", http.StatusBadRequest)
+			return
+		}
+	}
+
 	app.State.groups[groupIdx].Services = append(app.State.groups[groupIdx].Services, payload.Service)
-	// Copy before disk I/O
 	groupsCopy := app.cloneGroupsLocked()
 	app.State.mu.Unlock()
 
 	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Save error: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"message": "Service added",
+		"message": "Сервис добавлен",
 	}); err != nil {
 		slog.Debug("Failed to encode add service response", "error", err)
 	}
@@ -655,27 +657,27 @@ func (app *App) apiAdminUpdateService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Некорректный JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if err := validateName(payload.GroupName, "Group name"); err != nil {
+	if err := validateName(payload.GroupName, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateName(payload.OldName, "Old service name"); err != nil {
+	if err := validateName(payload.OldName, "Старое название сервиса"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateName(payload.NewService.Name, "New service name"); err != nil {
+	if err := validateName(payload.NewService.Name, "Новое название сервиса"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateURL(payload.NewService.URL, "Service URL"); err != nil {
+	if err := validateURL(payload.NewService.URL, "URL сервиса"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateIP(payload.NewService.IP, "Service IP"); err != nil {
+	if err := validateIP(payload.NewService.IP, "IP-адрес сервиса"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -685,31 +687,30 @@ func (app *App) apiAdminUpdateService(w http.ResponseWriter, r *http.Request) {
 	groupIdx, ok := app.findGroupIndexLocked(payload.GroupName)
 	if !ok {
 		app.State.mu.Unlock()
-		http.Error(w, "Group not found", http.StatusNotFound)
+		http.Error(w, "Группа не найдена", http.StatusNotFound)
 		return
 	}
 
 	serviceIdx, ok := app.findServiceIndexLocked(app.State.groups[groupIdx].Services, payload.OldName)
 	if !ok {
 		app.State.mu.Unlock()
-		http.Error(w, "Service not found", http.StatusNotFound)
+		http.Error(w, "Сервис не найден", http.StatusNotFound)
 		return
 	}
 
 	app.State.groups[groupIdx].Services[serviceIdx] = payload.NewService
-	// Copy before disk I/O
 	groupsCopy := app.cloneGroupsLocked()
 	app.State.mu.Unlock()
 
 	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Save error: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"message": "Service updated",
+		"message": "Сервис обновлён",
 	}); err != nil {
 		slog.Debug("Failed to encode update service response", "error", err)
 	}
@@ -723,15 +724,15 @@ func (app *App) apiAdminDeleteService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Некорректный JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if err := validateName(payload.GroupName, "Group name"); err != nil {
+	if err := validateName(payload.GroupName, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateName(payload.ServiceName, "Service name"); err != nil {
+	if err := validateName(payload.ServiceName, "Название сервиса"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -741,14 +742,15 @@ func (app *App) apiAdminDeleteService(w http.ResponseWriter, r *http.Request) {
 	groupIdx, ok := app.findGroupIndexLocked(payload.GroupName)
 	if !ok {
 		app.State.mu.Unlock()
-		http.Error(w, "Group not found", http.StatusNotFound)
+		http.Error(w, "Группа не найдена", http.StatusNotFound)
 		return
 	}
 
 	found := false
 	newServices := make([]Service, 0, len(app.State.groups[groupIdx].Services))
 	for _, s := range app.State.groups[groupIdx].Services {
-		if s.Name == payload.ServiceName {
+		// Унифицированное сравнение без учёта регистра
+		if strings.EqualFold(s.Name, payload.ServiceName) {
 			found = true
 			continue
 		}
@@ -757,24 +759,23 @@ func (app *App) apiAdminDeleteService(w http.ResponseWriter, r *http.Request) {
 
 	if !found {
 		app.State.mu.Unlock()
-		http.Error(w, "Service not found", http.StatusNotFound)
+		http.Error(w, "Сервис не найден", http.StatusNotFound)
 		return
 	}
 
 	app.State.groups[groupIdx].Services = newServices
-	// Copy before disk I/O
 	groupsCopy := app.cloneGroupsLocked()
 	app.State.mu.Unlock()
 
 	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Save error: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"message": "Service deleted",
+		"message": "Сервис удалён",
 	}); err != nil {
 		slog.Debug("Failed to encode delete service response", "error", err)
 	}
@@ -789,19 +790,19 @@ func (app *App) apiAdminMoveService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Некорректный JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if err := validateName(payload.FromGroup, "From group"); err != nil {
+	if err := validateName(payload.FromGroup, "Исходная группа"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateName(payload.ToGroup, "To group"); err != nil {
+	if err := validateName(payload.ToGroup, "Целевая группа"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateName(payload.Service, "Service name"); err != nil {
+	if err := validateName(payload.Service, "Название сервиса"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -811,21 +812,21 @@ func (app *App) apiAdminMoveService(w http.ResponseWriter, r *http.Request) {
 	fromIdx, ok := app.findGroupIndexLocked(payload.FromGroup)
 	if !ok {
 		app.State.mu.Unlock()
-		http.Error(w, "Source group not found", http.StatusNotFound)
+		http.Error(w, "Исходная группа не найдена", http.StatusNotFound)
 		return
 	}
 
 	toIdx, ok := app.findGroupIndexLocked(payload.ToGroup)
 	if !ok {
 		app.State.mu.Unlock()
-		http.Error(w, "Target group not found", http.StatusNotFound)
+		http.Error(w, "Целевая группа не найдена", http.StatusNotFound)
 		return
 	}
 
 	serviceIdx, ok := app.findServiceIndexLocked(app.State.groups[fromIdx].Services, payload.Service)
 	if !ok {
 		app.State.mu.Unlock()
-		http.Error(w, "Service not found", http.StatusNotFound)
+		http.Error(w, "Сервис не найден", http.StatusNotFound)
 		return
 	}
 
@@ -836,19 +837,18 @@ func (app *App) apiAdminMoveService(w http.ResponseWriter, r *http.Request) {
 	)
 	app.State.groups[toIdx].Services = append(app.State.groups[toIdx].Services, svc)
 
-	// Copy before disk I/O
 	groupsCopy := app.cloneGroupsLocked()
 	app.State.mu.Unlock()
 
 	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Save error: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"message": "Service moved",
+		"message": "Сервис перемещён",
 	}); err != nil {
 		slog.Debug("Failed to encode move service response", "error", err)
 	}
@@ -862,20 +862,20 @@ func (app *App) apiAdminReorderServices(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Некорректный JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if err := validateName(payload.GroupName, "Group name"); err != nil {
+	if err := validateName(payload.GroupName, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if len(payload.Services) == 0 {
-		http.Error(w, "Services list is empty", http.StatusBadRequest)
+		http.Error(w, "Список сервисов пуст", http.StatusBadRequest)
 		return
 	}
 	for _, svcName := range payload.Services {
-		if err := validateName(svcName, "Service name"); err != nil {
+		if err := validateName(svcName, "Название сервиса"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -886,46 +886,46 @@ func (app *App) apiAdminReorderServices(w http.ResponseWriter, r *http.Request) 
 	groupIdx, ok := app.findGroupIndexLocked(payload.GroupName)
 	if !ok {
 		app.State.mu.Unlock()
-		http.Error(w, "Group not found", http.StatusNotFound)
+		http.Error(w, "Группа не найдена", http.StatusNotFound)
 		return
 	}
 
 	if len(payload.Services) != len(app.State.groups[groupIdx].Services) {
 		app.State.mu.Unlock()
-		http.Error(w, "Services count mismatch", http.StatusBadRequest)
+		http.Error(w, "Количество сервисов не совпадает", http.StatusBadRequest)
 		return
 	}
 
+	// Карта с ключом в нижнем регистре для регистронезависимого поиска
 	svcMap := make(map[string]Service, len(app.State.groups[groupIdx].Services))
 	for _, s := range app.State.groups[groupIdx].Services {
-		svcMap[s.Name] = s
+		svcMap[strings.ToLower(s.Name)] = s
 	}
 
 	newServices := make([]Service, 0, len(payload.Services))
 	for _, name := range payload.Services {
-		svc, ok := svcMap[name]
+		svc, ok := svcMap[strings.ToLower(name)]
 		if !ok {
 			app.State.mu.Unlock()
-			http.Error(w, fmt.Sprintf("Service %q not found", name), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Сервис %q не найден", name), http.StatusBadRequest)
 			return
 		}
 		newServices = append(newServices, svc)
 	}
 
 	app.State.groups[groupIdx].Services = newServices
-	// Copy before disk I/O
 	groupsCopy := app.cloneGroupsLocked()
 	app.State.mu.Unlock()
 
 	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Save error: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"message": "Services order updated",
+		"message": "Порядок сервисов обновлён",
 	}); err != nil {
 		slog.Debug("Failed to encode reorder service response", "error", err)
 	}

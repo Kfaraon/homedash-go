@@ -1,41 +1,20 @@
 services:
   homedash:
-    build:
-      context: .
-      dockerfile: dockerfile
+    build: .
     container_name: homedash
+    env_file: .env
     ports:
       - "${HOMEDASH_PORT:-5000}:5000"
     volumes:
-      # Монтируем директорию с конфигами вместо отдельного файла
-      # Это позволяет избежать ошибок при записи файла config.json в Docker
       - ./data:/app/data
     environment:
-      - PORT=5000
-      - CHECK_TIMEOUT=2s
-      - PING_TIMEOUT=1s
-      - TZ=${TZ:-Europe/Moscow}
-      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
-      - IP_PROVIDERS=https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip,https://ident.me
-      - IP_CACHE_TTL=10m
-      # Путь к конфигурационному файлу (используется папка data вместо корневой)
-      - CONFIG_FILE=/app/data/config.json
-      # Путь к файлу с иконками
-      - ICONS_CONFIG_PATH=/app/data/icons.json
-      # Новые переменные для оптимизаций производительности
       - MAX_WORKERS=${MAX_WORKERS:-20}
       - USE_LRU_CACHE=${USE_LRU_CACHE:-false}
       - LRU_CACHE_CAPACITY=${LRU_CACHE_CAPACITY:-1000}
       - LRU_CACHE_TTL=${LRU_CACHE_TTL:-5m}
-      # Lazy evaluation: пауза проверок при простое
-      - IDLE_TIMEOUT=5m
-      # Оптимизация ресурсов
-      - MAX_WORKERS=20
-      - GOMAXPROCS=2
-    restart: unless-stopped
+      - IDLE_TIMEOUT=${IDLE_TIMEOUT:-5m}
     healthcheck:
-      # Используем curl как основной метод, wget как fallback (реализовано в healthcheck.sh)
-      #test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 30s
       timeout: 5s
       retries: 3

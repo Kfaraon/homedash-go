@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 )
@@ -48,7 +47,6 @@ func checkService(ctx context.Context, s Service, pingTimeout time.Duration) Sta
 // checkHTTP performs HTTP request with reusable client
 func checkHTTP(ctx context.Context, u string, verifySSL bool) bool {
 	client := getHTTPClient(verifySSL)
-
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		slog.Debug("HTTP request failed", "url", u, "verify_ssl", verifySSL, "error", err)
@@ -63,9 +61,10 @@ func checkHTTP(ctx context.Context, u string, verifySSL bool) bool {
 		}
 		return false
 	}
+
 	// Read and discard body to allow connection reuse (keep-alive)
 	// Limit to 32KB to avoid blocking on large responses
-	_, _ = io.CopyN(io.Discard, resp.Body, 32*1024)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 32*1024))
 	resp.Body.Close()
 
 	return resp.StatusCode < 500
@@ -74,19 +73,16 @@ func checkHTTP(ctx context.Context, u string, verifySSL bool) bool {
 // checkPing performs host availability check
 // Fallback: if ping is unavailable, uses TCP connect
 func checkPing(ctx context.Context, ip string, pingTimeout time.Duration) bool {
-	// Extract host and port from string (supports host:port)
 	host, port := extractHostAndPort(ip)
 
 	// If port is explicitly specified — try only it
 	if port != "" {
-		if tcpConnect(ctx, host, port) {
-			return true
-		}
-	} else {
-		// Try TCP connect on standard ports as a quick check
-		if tcpConnect(ctx, host, "80") || tcpConnect(ctx, host, "443") {
-			return true
-		}
+		return tcpConnect(ctx, host, port)
+	}
+
+	// Try TCP connect on standard ports as a quick check
+	if tcpConnect(ctx, host, "80") || tcpConnect(ctx, host, "443") {
+		return true
 	}
 
 	// Fallback to ICMP ping
@@ -95,24 +91,19 @@ func checkPing(ctx context.Context, ip string, pingTimeout time.Duration) bool {
 
 // extractHostAndPort extracts host and port from a string like "host:port"
 func extractHostAndPort(addr string) (host, port string) {
-	if idx := strings.LastIndex(addr, ":"); idx != -1 {
-		return addr[:idx], addr[idx+1:]
+	if h, p, err := net.SplitHostPort(addr); err == nil {
+		return h, p
 	}
 	return addr, ""
 }
 
 // tcpConnect checks availability via TCP connection to a specific port
-func tcpConnect(ctx context.Context, host string, port string) bool {
-	dialer := &net.Dialer{
-		Timeout: 500 * time.Millisecond,
-	}
-
+func tcpConnect(ctx context.Context, host, port string) bool {
+	dialer := &net.Dialer{Timeout: 500 * time.Millisecond}
 	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
 	if conn != nil {
-		conn.Close()
-		return err == nil
+		defer conn.Close()
 	}
-
 	return err == nil
 }
 
@@ -139,15 +130,10 @@ func executePing(ctx context.Context, ip string, pingTimeout time.Duration) bool
 }
 
 // ===== HTTP Transport Pool =====
-
 var (
-	// transportSecure — transport with SSL verification
-	transportSecure *http.Transport
-	// transportInsecure — transport without SSL verification
-	transportInsecure *http.Transport
-	// httpClientSecure — reusable client with SSL
-	httpClientSecure *http.Client
-	// httpClientInsecure — reusable client without SSL
+	transportSecure    *http.Transport
+	transportInsecure  *http.Transport
+	httpClientSecure   *http.Client
 	httpClientInsecure *http.Client
 	transportOnce      sync.Once
 )
@@ -161,7 +147,6 @@ func initHTTPTransports() {
 			IdleConnTimeout:     90 * time.Second,
 			TLSClientConfig:     &tls.Config{InsecureSkipVerify: false}, //nolint:gosec
 		}
-
 		transportInsecure = &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 20,
@@ -169,7 +154,6 @@ func initHTTPTransports() {
 			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
 		}
 
-		// No client-level Timeout — rely on context timeout only (avoids conflict)
 		httpClientSecure = &http.Client{
 			Transport: transportSecure,
 			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
@@ -192,9 +176,9 @@ func initHTTPTransports() {
 	})
 }
 
-// getHTTPTransport returns the combined HTTP transport for CloseIdleConnections
+// getHTTPTransport returns the secure HTTP transport for maintenance
 func getHTTPTransport() interface{ CloseIdleConnections() } {
-	return transportSecure // shares connections with transportInsecure via same pool
+	return transportSecure
 }
 
 // getHTTPClient returns a reusable http.Client
