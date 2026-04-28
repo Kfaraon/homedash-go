@@ -22,6 +22,7 @@
     {"key": "homebridge", "icon": "simple-icons:homebridge", "bg": "#FCE4E4", "color": "#491F5E", "category": "smarthome", "search": [], "priority": 0},
     {"key": "zigbee2mqtt", "icon": "mdi:zigbee", "bg": "#D9EDF2", "color": "#42A5F5", "category": "iot", "search": ["z2m"], "priority": 0},
     {"key": "zwave", "icon": "mdi:z-wave", "bg": "#FDF3D0", "color": "", "category": "iot", "search": ["z-wave"], "priority": 0},
+    {"key": "lampa", "icon": "mdi:filmstrip-box", "bg": "#FDF3D0", "color": "", "category": "media", "search": [], "priority": 0},
     {"key": "docker", "icon": "simple-icons:docker", "bg": "#E3F2FD", "color": "#2496ED", "category": "container", "search": [], "priority": 0},
     {"key": "podman", "icon": "simple-icons:podman", "bg": "#E3F2FD", "color": "#892CA0", "category": "container", "search": [], "priority": 0},
     {"key": "portainer", "icon": "simple-icons:portainer", "bg": "#E6F5E0", "color": "#65BC40", "category": "container", "search": ["docker ui"], "priority": 0},
@@ -95,7 +96,6 @@
     {"key": "heimdall", "icon": "mdi:shield-home", "bg": "#D9EDF2", "color": "#009688", "category": "dashboard", "search": [], "priority": 0},
     {"key": "overseerr", "icon": "simple-icons:overseerr", "bg": "#FCE4E4", "color": "#E53935", "category": "media", "search": [], "priority": 0},
     {"key": "jellyseerr", "icon": "simple-icons:overseerr", "bg": "#D9EDF2", "color": "#00A4DC", "category": "media", "search": ["jellyseer"], "priority": 0},
-
     {"key": "youtube", "icon": "simple-icons:youtube", "bg": "#FCE4E4", "color": "#FF0000", "category": "media", "search": ["yt"], "priority": 1},
     {"key": "spotify", "icon": "simple-icons:spotify", "bg": "#E6F5E0", "color": "#1DB954", "category": "media", "search": [], "priority": 1},
     {"key": "netflix", "icon": "simple-icons:netflix", "bg": "#FCE4E4", "color": "#E50914", "category": "media", "search": [], "priority": 1},
@@ -120,7 +120,19 @@
     {"key": "openwrt", "icon": "simple-icons:openwrt", "bg": "#CEDFF0", "color": "#00B4C8", "category": "network", "search": ["lede"], "priority": 2},
     {"key": "dd-wrt", "icon": "simple-icons:ddwrt", "bg": "#E3F2FD", "color": "#336699", "category": "network", "search": ["ddwrt"], "priority": 0},
     {"key": "speedtest", "icon": "simple-icons:speedtest", "bg": "#E3F2FD", "color": "#14274C", "category": "monitoring", "search": ["speed test"], "priority": 0},
-    {"key": "glances", "icon": "simple-icons:glances", "bg": "#D9EDF2", "color": "#2E7D32", "category": "monitoring", "search": [], "priority": 0}
+    {"key": "glances", "icon": "simple-icons:glances", "bg": "#D9EDF2", "color": "#2E7D32", "category": "monitoring", "search": [], "priority": 0},
+    {"key": "huawei", "icon": "simple-icons:huawei", "bg": "#FDE8D0", "color": "#CF0A2C", "category": "hardware", "search": [], "priority": 0},
+    {"key": "samsung", "icon": "simple-icons:samsung", "bg": "#E3F2FD", "color": "#1428A0", "category": "hardware", "search": ["smartthings", "galaxy"], "priority": 0},
+    {"key": "lg", "icon": "simple-icons:lg", "bg": "#FCE4E4", "color": "#A50034", "category": "hardware", "search": [], "priority": 0},
+    {"key": "cisco", "icon": "simple-icons:cisco", "bg": "#D9EDF2", "color": "#049FD9", "category": "network", "search": ["switch", "enterprise", "meraki"], "priority": 1},
+    {"key": "dell", "icon": "simple-icons:dell", "bg": "#E3F2FD", "color": "#007DB8", "category": "hardware", "search": ["idrac", "poweredge"], "priority": 0},
+    {"key": "hp", "icon": "simple-icons:hp", "bg": "#E8E8FF", "color": "#0096D6", "category": "hardware", "search": ["ilo", "proliant"], "priority": 0},
+    {"key": "lenovo", "icon": "simple-icons:lenovo", "bg": "#E6F5E0", "color": "#E2231A", "category": "hardware", "search": ["thinksystem", "xclarity"], "priority": 0},
+    {"key": "apple", "icon": "simple-icons:apple", "bg": "#F0F0F0", "color": "#000000", "category": "hardware", "search": ["mac mini", "macbook", "mac studio"], "priority": 1},
+    {"key": "xiaomi", "icon": "simple-icons:xiaomi", "bg": "#FDE8D0", "color": "#FF6700", "category": "smarthome", "search": ["mi", "mijia"], "priority": 0},
+    {"key": "tp-link", "icon": "simple-icons:tplink", "bg": "#DFF5E6", "color": "#4AC461", "category": "network", "search": ["omada"], "priority": 0},
+    {"key": "asus", "icon": "simple-icons:asus", "bg": "#E3F2FD", "color": "#000000", "category": "hardware", "search": ["rog", "router"], "priority": 0},
+    {"key": "qnap", "icon": "simple-icons:qnap", "bg": "#D9EDF2", "color": "#0066CC", "category": "storage", "search": ["nas"], "priority": 0}
   ],
   "aliases": {
     "postgres": "postgresql", "mongo": "mongodb", "elastic": "elasticsearch",
@@ -131,6 +143,12 @@
     "rpi": "raspberry pi", "epicstore": "epic games"
   },
   "categories": {
+    "hardware": {
+      "fallback_icons": ["mdi:chip", "mdi:motherboard", "mdi:devices"],
+      "bg_color": "#F0F0F0",
+      "icon_color": "#333333",
+      "keywords": ["hardware", "device", "server", "laptop", "smartphone", "electronics"]
+    },
     "db": {
       "fallback_icons": ["simple-icons:postgresql", "simple-icons:mysql", "mdi:database"],
       "bg_color": "#E3F2FD", "icon_color": "#336791",
