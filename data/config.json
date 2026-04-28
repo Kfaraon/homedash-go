@@ -4,26 +4,20 @@
       "name": "Внешние сервисы",
       "services": [
         {
-          "name": "Spotify",
-          "url": "https://spotify.com",
-          "ip": "",
-          "verify_ssl": false
-        },
-        {
           "name": "GitHub",
           "url": "https://github.com",
           "ip": "",
           "verify_ssl": false
         },
         {
-          "name": "Steam",
-          "url": "https://steampowered.com",
+          "name": "Google",
+          "url": "https://google.com",
           "ip": "",
           "verify_ssl": false
         },
         {
-          "name": "Google",
-          "url": "https://google.com",
+          "name": "Spotify",
+          "url": "https://spotify.com",
           "ip": "",
           "verify_ssl": false
         },
@@ -40,14 +34,14 @@
           "verify_ssl": false
         },
         {
-          "name": "Discord",
-          "url": "https://discord.com",
+          "name": "YouTube",
+          "url": "https://youtube.com",
           "ip": "",
           "verify_ssl": false
         },
         {
-          "name": "YouTube",
-          "url": "https://youtube.com",
+          "name": "Discord",
+          "url": "https://discord.com",
           "ip": "",
           "verify_ssl": false
         }
@@ -93,14 +87,14 @@
           "verify_ssl": false
         },
         {
-          "name": "Portainer",
-          "url": "http://127.0.0.1:9000",
+          "name": "Traefik",
+          "url": "https://Traefik.com",
           "ip": "127.0.0.1",
           "verify_ssl": false
         },
         {
-          "name": "Prometheus",
-          "url": "http://127.0.0.1:9090",
+          "name": "Zabbix",
+          "url": "",
           "ip": "127.0.0.1",
           "verify_ssl": false
         }
