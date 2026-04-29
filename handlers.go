@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// ─── Main handlers ───
-
 // ServeHome — handler for the main page
 func (app *App) ServeHome(w http.ResponseWriter, _ *http.Request) {
 	groups := app.GetGroupsCopy()
@@ -77,13 +75,11 @@ func (app *App) ServeMyIP(w http.ResponseWriter, r *http.Request) {
 
 	ip, ipType, provider := app.fetchPublicIP(ctx)
 	if ip == "" {
-		app.Metrics.IncrementIPFetchErrors()
 		http.Error(w, "Не удалось определить публичный IP-адрес", http.StatusBadGateway)
 		return
 	}
 
 	app.updateIPCache(ip, ipType, provider)
-	app.Metrics.IncrementIPFetches()
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Header().Set("X-IP-Source", "fresh")
@@ -168,24 +164,6 @@ func (app *App) fetchPublicIP(ctx context.Context) (ip, ipType, provider string)
 	return "", "", ""
 }
 
-// ServeMetrics — handler for metrics (JSON format for frontend)
-func (app *App) ServeMetrics(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(app.Metrics.GetSnapshot()); err != nil {
-		slog.Debug("Failed to encode metrics", "error", err)
-	}
-}
-
-// ServePrometheusMetrics — handler for Prometheus metrics (text format)
-func (app *App) ServePrometheusMetrics(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	if _, err := w.Write([]byte(app.Metrics.GetPrometheusMetrics())); err != nil {
-		slog.Debug("Failed to write prometheus metrics", "error", err)
-	}
-}
-
-// ─── Middleware ───
-
 // corsMiddleware — middleware for CORS
 func (app *App) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -220,7 +198,7 @@ func (app *App) corsMiddleware(next http.Handler) http.Handler {
 func (app *App) maxBytesMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -240,21 +218,17 @@ func (app *App) contentTypeMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// ─── Cached Statuses ───
-
+// getCachedStatuses returns cached statuses or stale/empty fallback
 func (app *App) getCachedStatuses() map[string]any {
 	if cache := app.GetCache(); cache != nil {
-		app.Metrics.IncrementCacheHits()
 		return app.statusResp(cache)
 	}
 
 	if stale, ok := app.GetStaleCache(); ok {
-		app.Metrics.IncrementCacheHits()
 		go app.refreshCacheIfNeeded()
 		return app.statusResp(stale)
 	}
 
-	app.Metrics.IncrementCacheMisses()
 	go app.refreshCacheIfNeeded()
 	return app.statusResp(make(map[string]Status))
 }
@@ -266,8 +240,7 @@ func (app *App) statusResp(services map[string]Status) map[string]any {
 	}
 }
 
-// ─── Icon Helpers (delegates to iconResolver) ───
-
+// Icon helpers
 func (app *App) ResolveIcon(name, explicitIcon string) string {
 	return app.iconResolver.ResolveIcon(name, explicitIcon)
 }

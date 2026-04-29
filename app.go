@@ -17,9 +17,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// ─── App ───
-
-// App holds all application dependencies (replaces global variables)
+// App holds all application dependencies
 type App struct {
 	// Config
 	ConfigFile       string
@@ -28,20 +26,20 @@ type App struct {
 	CheckTimeout     time.Duration
 	PingTimeout      time.Duration
 	AdminAPIKey      string
-	RequireAdminAuth atomic.Bool // thread-safe, no data race
+	RequireAdminAuth atomic.Bool
 	AllowedOrigins   string
 
 	// IP settings
-	IPProviders []string      // fallback list
-	IPCacheTTL  time.Duration // cache duration
+	IPProviders []string
+	IPCacheTTL  time.Duration
 	IPCache     *IPCache
 	IPCacheMu   sync.RWMutex
 
 	// Performance settings
-	MaxWorkers       int           // maximum number of parallel workers for service checks
-	UseLRUCache      bool          // whether to use LRU cache instead of simple map
-	LRUCacheCapacity int           // maximum number of entries in LRU cache (0 = unlimited)
-	LRUCacheTTL      time.Duration // TTL for cache entries (0 = no expiration)
+	MaxWorkers       int
+	UseLRUCache      bool
+	LRUCacheCapacity int
+	LRUCacheTTL      time.Duration
 
 	// State
 	State *AppState
@@ -50,21 +48,21 @@ type App struct {
 	HomeTmpl  *template.Template
 	AdminTmpl *template.Template
 
-	// Metrics
-	Metrics *Metrics
+	// Circuit breaker
+	circuitBreaker *CircuitBreakerManager
 
 	// Watcher
 	Watcher *fsnotify.Watcher
-	Done    chan struct{} // signal to stop background goroutines
+	Done    chan struct{}
 
-	// Reload mutex to prevent concurrent reloads
+	// Reload mutex
 	reloadMu sync.Mutex
 
-	// Lazy evaluation: трекинг активности
-	lastAccess   atomic.Int64  // unix timestamp последнего запроса
-	checkActive  atomic.Bool   // запущен ли цикл фоновых проверок
-	isRefreshing atomic.Bool   // защита от параллельного refresh
-	idleTimeout  time.Duration // время простоя перед паузой проверок
+	// Lazy evaluation
+	lastAccess   atomic.Int64
+	checkActive  atomic.Bool
+	isRefreshing atomic.Bool
+	idleTimeout  time.Duration
 
 	iconResolver *IconResolver
 }
@@ -79,7 +77,7 @@ type AppState struct {
 	staleTS time.Time
 }
 
-// NewApp creates a fully initialized App with all dependencies
+// NewApp creates a fully initialized App
 func NewApp() (*App, error) {
 	adminAPIKey := getEnv("ADMIN_API_KEY", "")
 
@@ -91,14 +89,14 @@ func NewApp() (*App, error) {
 		PingTimeout:    getDurationEnv("PING_TIMEOUT", 1*time.Second),
 		AdminAPIKey:    adminAPIKey,
 		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
-		MaxWorkers:     getIntEnv("MAX_WORKERS", 20), // default 20 workers
+		MaxWorkers:     getIntEnv("MAX_WORKERS", 20),
 		State: &AppState{
 			cache: make(map[string]Status),
 			stale: make(map[string]Status),
 		},
-		Metrics:     NewMetrics(),
-		idleTimeout: getDurationEnv("IDLE_TIMEOUT", 5*time.Minute),
-		Done:        make(chan struct{}),
+		circuitBreaker: NewCircuitBreakerManager(),
+		idleTimeout:    getDurationEnv("IDLE_TIMEOUT", 5*time.Minute),
+		Done:           make(chan struct{}),
 	}
 	app.lastAccess.Store(time.Now().Unix())
 	app.checkActive.Store(false)
@@ -116,7 +114,7 @@ func NewApp() (*App, error) {
 	app.IPCacheTTL = getDurationEnv("IP_CACHE_TTL", 10*time.Minute)
 	app.IPCache = &IPCache{}
 
-	// Load and validate config (single file read)
+	// Load and validate config
 	cfg, err := loadConfig(app.ConfigFile)
 	if err != nil {
 		return nil, err
@@ -144,18 +142,17 @@ func NewApp() (*App, error) {
 	return app, nil
 }
 
-// isActive возвращает true, если был запрос за последний idleTimeout
+// isActive returns true if there was a request within idleTimeout
 func (a *App) isActive() bool {
 	return time.Since(time.Unix(a.lastAccess.Load(), 0)) < a.idleTimeout
 }
 
-// markAccess обновляет время последнего доступа
+// markAccess updates last access time
 func (a *App) markAccess() {
 	a.lastAccess.Store(time.Now().Unix())
 }
 
-// ─── Template initialization ───
-
+// initTemplates initializes HTML templates
 func (app *App) initTemplates() error {
 	homeFuncs := template.FuncMap{
 		"resolveIcon":      app.ResolveIcon,
@@ -185,8 +182,6 @@ func (app *App) initTemplates() error {
 
 	return nil
 }
-
-// ─── State accessors ───
 
 // LoadGroups loads groups from the config file
 func (app *App) LoadGroups() ([]Group, error) {
@@ -295,20 +290,13 @@ func (app *App) GetStaleCache() (map[string]Status, bool) {
 	return nil, false
 }
 
-// ─── Server lifecycle ───
-
 // Run starts the HTTP server and blocks until shutdown
 func (app *App) Run() error {
-	// Запускаем цикл проверок только при активности
 	go app.startLazyCheckLoop()
-
-	// Start config watcher
 	app.StartConfigWatcher()
 
-	// Build router
 	mux := app.buildRouter()
 
-	// Server with timeouts
 	srv := &http.Server{
 		Addr:         ":" + app.ServerPort,
 		Handler:      mux,
@@ -317,7 +305,6 @@ func (app *App) Run() error {
 		IdleTimeout:  30 * time.Second,
 	}
 
-	// Graceful shutdown
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 
@@ -332,10 +319,7 @@ func (app *App) Run() error {
 	<-done
 	slog.Info("Shutdown signal received, shutting down...")
 
-	// Signal background goroutines to stop
 	close(app.Done)
-
-	// Close idle HTTP connections
 	getHTTPTransport().CloseIdleConnections()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -348,9 +332,9 @@ func (app *App) Run() error {
 	return nil
 }
 
-// startLazyCheckLoop — цикл с авто-паузой при простое
+// startLazyCheckLoop — cycle with auto-pause on idle
 func (app *App) startLazyCheckLoop() {
-	ticker := time.NewTicker(30 * time.Second) // можно вынести в env
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -359,50 +343,44 @@ func (app *App) startLazyCheckLoop() {
 			app.checkActive.Store(false)
 			return
 		case <-ticker.C:
-			// Если нет активности — пропускаем итерацию (не останавливаем горутину)
 			if !app.isActive() {
 				continue
 			}
-			// Есть активность — обновляем кэш в фоне
 			app.refreshCacheIfNeeded()
 		}
 	}
 }
 
-// app.go — метод refreshCacheIfNeeded, замена блока с контекстом
+// refreshCacheIfNeeded refreshes cache in background
 func (app *App) refreshCacheIfNeeded() {
 	if !app.isRefreshing.CompareAndSwap(false, true) {
 		return
 	}
 	defer app.isRefreshing.Store(false)
 
-	// Проверка завершения ДО начала работы
 	select {
 	case <-app.Done:
 		return
 	default:
 	}
 
-	// Контекст с таймаутом
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// Горутина для проверки app.Done параллельно с работой
 	done := make(chan struct{})
 	go func() {
 		select {
 		case <-app.Done:
-			cancel() // Принудительная отмена
+			cancel()
 		case <-done:
 		}
 	}()
 
 	groups := app.GetGroupsCopy()
-	sm := checkServicesInParallel(ctx, groups, app.Metrics, app.PingTimeout, app.MaxWorkers)
+	sm := checkServicesInParallel(ctx, groups, app.circuitBreaker, app.PingTimeout, app.MaxWorkers)
 
-	close(done) // Останавливаем горутину-наблюдатель
+	close(done)
 
-	// Записываем кэш только если не было отмены
 	select {
 	case <-app.Done:
 		return
@@ -411,10 +389,9 @@ func (app *App) refreshCacheIfNeeded() {
 	}
 }
 
-// trackAccessMiddleware — обновляет lastAccess при запросах к основным эндпоинтам
+// trackAccessMiddleware updates lastAccess on main endpoints
 func (app *App) trackAccessMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Отслеживаем только пользовательские запросы (не статику/админку)
 		if r.URL.Path == "/" || r.URL.Path == "/api/status" || r.URL.Path == "/health" {
 			app.markAccess()
 		}
@@ -422,24 +399,18 @@ func (app *App) trackAccessMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// ─── Router ───
-
+// buildRouter constructs the HTTP router
 func (app *App) buildRouter() http.Handler {
 	mux := http.NewServeMux()
 
-	// Static files
 	staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir("static")))
 	mux.Handle("/static/", staticHandler)
 
-	// Main routes
 	mux.Handle("/", app.trackAccessMiddleware(http.HandlerFunc(app.ServeHome)))
 	mux.Handle("/api/status", app.trackAccessMiddleware(http.HandlerFunc(app.ServeStatus)))
 	mux.Handle("/health", app.trackAccessMiddleware(http.HandlerFunc(app.ServeHealth)))
 	mux.HandleFunc("/api/myip", app.ServeMyIP)
-	mux.HandleFunc("/api/metrics", app.ServeMetrics)
-	mux.HandleFunc("/metrics", app.ServePrometheusMetrics)
 
-	// Admin routes (auth + rate limiting applied BEFORE outer middleware)
 	adminMux := http.NewServeMux()
 	adminMux.HandleFunc("/admin", app.ServeAdmin)
 	adminMux.HandleFunc("/api/admin/groups", app.apiAdminGroups)
@@ -448,14 +419,10 @@ func (app *App) buildRouter() http.Handler {
 	adminMux.HandleFunc("/api/admin/service/reorder", app.apiAdminReorderServices)
 	adminMux.HandleFunc("/api/admin/service", app.handleServiceCRUD)
 
-	// Wrap admin routes with auth + rate limiting
 	adminHandler := app.rateLimitMiddleware(app.adminAuthMiddleware(adminMux))
 	mux.Handle("/admin", adminHandler)
 	mux.Handle("/api/admin/", adminHandler)
 
-	// Middleware chain: apply in reverse order of execution
-	// Public routes order: CORS → ContentType → MaxBytes → Handler
-	// Admin routes order: CORS → Auth → RateLimit → ContentType → MaxBytes → Handler
 	var handler http.Handler = mux
 	handler = app.maxBytesMiddleware(handler)
 	handler = app.contentTypeMiddleware(handler)
@@ -492,15 +459,12 @@ func (app *App) handleServiceCRUD(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ─── Helpers ───
-
+// jsonMarshalBytes helper
 func jsonMarshalBytes(s string) ([]byte, error) {
 	return json.Marshal(s)
 }
 
-// ─── Config Watcher ───
-
-// StartConfigWatcher starts watching the config file for changes
+// StartConfigWatcher watches config file changes
 func (app *App) StartConfigWatcher() {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -518,7 +482,6 @@ func (app *App) StartConfigWatcher() {
 	app.Watcher = w
 	triggerCh := make(chan struct{}, 1)
 
-	// Check if app is already shutting down
 	select {
 	case <-app.Done:
 		w.Close()
@@ -526,7 +489,6 @@ func (app *App) StartConfigWatcher() {
 	default:
 	}
 
-	// Debounce goroutine
 	go func() {
 		defer w.Close()
 		debounceTimer := time.NewTimer(500 * time.Millisecond)
@@ -540,7 +502,6 @@ func (app *App) StartConfigWatcher() {
 				if !ok {
 					return
 				}
-				// Stop existing timer before resetting to prevent double fire
 				if !debounceTimer.Stop() {
 					<-debounceTimer.C
 				}
@@ -548,7 +509,6 @@ func (app *App) StartConfigWatcher() {
 			case <-debounceTimer.C:
 				slog.Info("Config.json change detected, reloading...")
 				app.reloadConfig()
-				// Drain any pending events that arrived during reload
 				select {
 				case <-triggerCh:
 				default:
@@ -557,7 +517,6 @@ func (app *App) StartConfigWatcher() {
 		}
 	}()
 
-	// Event loop (runs until app.Done is closed or watcher errors out)
 	go func() {
 		for {
 			select {
@@ -588,7 +547,6 @@ func (app *App) StartConfigWatcher() {
 
 // reloadConfig reloads and validates the config file
 func (app *App) reloadConfig() {
-	// Prevent concurrent reloads
 	app.reloadMu.Lock()
 	defer app.reloadMu.Unlock()
 
@@ -603,36 +561,45 @@ func (app *App) reloadConfig() {
 		slog.Warn("Validation warning", "error", err)
 	}
 
-	// Update admin config
 	if cfg.admin != nil {
 		app.RequireAdminAuth.Store(app.AdminAPIKey != "" && cfg.admin.RequireAPIKey)
 	}
 
 	app.iconResolver.ClearCache()
+	app.circuitBreaker.Reset()
 	app.SetGroups(g)
-	app.Metrics.Reset()
 
 	n := 0
 	for _, gr := range g {
 		n += len(gr.Services)
 	}
-
-	app.Metrics.IncrementConfigReloads()
 	slog.Info("Config reloaded", "groups", len(g), "services", n)
 }
 
-// ─── Rate Limiter ───
+// rateLimitMiddleware applies rate limiting to admin endpoints
+func (app *App) rateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !adminRateLimiter.Allow() {
+			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // rateLimiter implements a simple token bucket rate limiter
 type rateLimiter struct {
 	mu         sync.Mutex
 	tokens     int64
 	maxTokens  int64
-	refillRate int64 // tokens per second
+	refillRate int64
 	lastRefill time.Time
 }
 
-// newRateLimiter creates a rate limiter
 func newRateLimiter(maxTokens, refillRate int64) *rateLimiter {
 	return &rateLimiter{
 		tokens:     maxTokens,
@@ -642,7 +609,6 @@ func newRateLimiter(maxTokens, refillRate int64) *rateLimiter {
 	}
 }
 
-// Allow returns true if the request is allowed
 func (rl *rateLimiter) Allow() bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -662,23 +628,4 @@ func (rl *rateLimiter) Allow() bool {
 	return true
 }
 
-// Global rate limiter for admin endpoints (10 requests/second, burst 20)
-//
-//nolint:gochecknoglobals
 var adminRateLimiter = newRateLimiter(20, 10)
-
-// rateLimitMiddleware applies rate limiting to admin endpoints
-func (app *App) rateLimitMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip rate limiting for CORS preflight
-		if r.Method == http.MethodOptions {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if !adminRateLimiter.Allow() {
-			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}

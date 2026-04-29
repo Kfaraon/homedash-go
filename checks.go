@@ -14,23 +14,130 @@ import (
 	"time"
 )
 
+// --- Circuit Breaker Manager (replaces Metrics circuit breaker functionality) ---
+
+type CircuitStateEnum int
+
+const (
+	CircuitClosed CircuitStateEnum = iota
+	CircuitOpen
+	CircuitHalfOpen
+)
+
+type CircuitState struct {
+	Failures    int
+	LastFailure time.Time
+	State       CircuitStateEnum
+	LastCheck   time.Time
+	MinInterval time.Duration
+}
+
+type CircuitBreakerManager struct {
+	mu     sync.RWMutex
+	states map[string]*CircuitState
+}
+
+func NewCircuitBreakerManager() *CircuitBreakerManager {
+	return &CircuitBreakerManager{
+		states: make(map[string]*CircuitState),
+	}
+}
+
+func (cbm *CircuitBreakerManager) getCircuitStateLocked(name string) *CircuitState {
+	cb, exists := cbm.states[name]
+	if !exists {
+		cb = &CircuitState{
+			State:       CircuitClosed,
+			MinInterval: 5 * time.Second,
+		}
+		cbm.states[name] = cb
+	}
+	return cb
+}
+
+// ShouldCheck returns true if the service should be checked (circuit breaker + rate limiting)
+func (cbm *CircuitBreakerManager) ShouldCheck(name string) bool {
+	cbm.mu.RLock()
+	defer cbm.mu.RUnlock()
+
+	cb, exists := cbm.states[name]
+	if !exists {
+		return true
+	}
+
+	if time.Since(cb.LastCheck) < cb.MinInterval {
+		return false
+	}
+
+	if cb.State == CircuitOpen {
+		if time.Since(cb.LastFailure) > 30*time.Second {
+			cbm.mu.RUnlock()
+			cbm.mu.Lock()
+			defer cbm.mu.Unlock()
+			cb2, exists2 := cbm.states[name]
+			if exists2 && cb2.State == CircuitOpen && time.Since(cb2.LastFailure) > 30*time.Second {
+				cb2.State = CircuitHalfOpen
+			}
+			return true
+		}
+		return false
+	}
+	return true
+}
+
+// RecordCheck updates circuit breaker state based on check result
+func (cbm *CircuitBreakerManager) RecordCheck(name string, success bool) {
+	cbm.mu.Lock()
+	defer cbm.mu.Unlock()
+
+	cb := cbm.getCircuitStateLocked(name)
+	cb.LastCheck = time.Now()
+
+	if success {
+		cb.Failures = 0
+		cb.State = CircuitClosed
+	} else {
+		cb.Failures++
+		cb.LastFailure = time.Now()
+		if cb.State == CircuitHalfOpen || cb.Failures >= 3 {
+			cb.State = CircuitOpen
+		}
+	}
+}
+
+// GetCircuitState returns the current circuit breaker state for a service
+func (cbm *CircuitBreakerManager) GetCircuitState(name string) CircuitStateEnum {
+	cbm.mu.RLock()
+	defer cbm.mu.RUnlock()
+	if cb, exists := cbm.states[name]; exists {
+		return cb.State
+	}
+	return CircuitClosed
+}
+
+// Reset clears all circuit breaker states
+func (cbm *CircuitBreakerManager) Reset() {
+	cbm.mu.Lock()
+	defer cbm.mu.Unlock()
+	cbm.states = make(map[string]*CircuitState)
+}
+
+// --- Service check functions ---
+
 // checkService checks a single service
 func checkService(ctx context.Context, s Service, pingTimeout time.Duration) Status {
 	var httpOk, pingOk *bool
 
-	// Check HTTP
 	if s.URL != "" {
 		ok := checkHTTP(ctx, s.URL, s.VerifySSL)
 		httpOk = &ok
 	}
 
-	// Check Ping
 	if s.IP != "" {
 		ok := checkPing(ctx, s.IP, pingTimeout)
 		pingOk = &ok
 	}
 
-	// Determine availability
 	avail := false
 	switch {
 	case s.URL != "" && s.IP != "":
@@ -62,8 +169,6 @@ func checkHTTP(ctx context.Context, u string, verifySSL bool) bool {
 		return false
 	}
 
-	// Read and discard body to allow connection reuse (keep-alive)
-	// Limit to 32KB to avoid blocking on large responses
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 32*1024))
 	resp.Body.Close()
 
@@ -71,25 +176,20 @@ func checkHTTP(ctx context.Context, u string, verifySSL bool) bool {
 }
 
 // checkPing performs host availability check
-// Fallback: if ping is unavailable, uses TCP connect
 func checkPing(ctx context.Context, ip string, pingTimeout time.Duration) bool {
 	host, port := extractHostAndPort(ip)
 
-	// If port is explicitly specified — try only it
 	if port != "" {
 		return tcpConnect(ctx, host, port)
 	}
 
-	// Try TCP connect on standard ports as a quick check
 	if tcpConnect(ctx, host, "80") || tcpConnect(ctx, host, "443") {
 		return true
 	}
 
-	// Fallback to ICMP ping
 	return executePing(ctx, host, pingTimeout)
 }
 
-// extractHostAndPort extracts host and port from a string like "host:port"
 func extractHostAndPort(addr string) (host, port string) {
 	if h, p, err := net.SplitHostPort(addr); err == nil {
 		return h, p
@@ -97,7 +197,6 @@ func extractHostAndPort(addr string) (host, port string) {
 	return addr, ""
 }
 
-// tcpConnect checks availability via TCP connection to a specific port
 func tcpConnect(ctx context.Context, host, port string) bool {
 	dialer := &net.Dialer{Timeout: 500 * time.Millisecond}
 	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
@@ -107,7 +206,6 @@ func tcpConnect(ctx context.Context, host, port string) bool {
 	return err == nil
 }
 
-// executePing executes the system ping command
 func executePing(ctx context.Context, ip string, pingTimeout time.Duration) bool {
 	timeoutSec := int(pingTimeout.Seconds())
 	if timeoutSec < 1 {
@@ -129,7 +227,73 @@ func executePing(ctx context.Context, ip string, pingTimeout time.Duration) bool
 	return true
 }
 
-// ===== HTTP Transport Pool =====
+// --- Worker pool for parallel checks ---
+
+func checkServicesInParallel(ctx context.Context, groups []Group, cb *CircuitBreakerManager, pingTimeout time.Duration, maxWorkers int) map[string]Status {
+	type serviceTask struct {
+		Svc         Service
+		PingTimeout time.Duration
+	}
+
+	var tasks []serviceTask
+	for _, g := range groups {
+		for _, s := range g.Services {
+			if cb.ShouldCheck(s.Name) {
+				tasks = append(tasks, serviceTask{Svc: s, PingTimeout: pingTimeout})
+			}
+		}
+	}
+
+	if len(tasks) == 0 {
+		return make(map[string]Status)
+	}
+
+	workers := maxWorkers
+	if len(tasks) < workers {
+		workers = len(tasks)
+	}
+
+	taskCh := make(chan serviceTask, len(tasks))
+	resultCh := make(chan struct {
+		name   string
+		status Status
+	}, len(tasks))
+	var wg sync.WaitGroup
+
+	for _, t := range tasks {
+		taskCh <- t
+	}
+	close(taskCh)
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range taskCh {
+				st := checkService(ctx, task.Svc, task.PingTimeout)
+				cb.RecordCheck(task.Svc.Name, st.Available)
+				resultCh <- struct {
+					name   string
+					status Status
+				}{task.Svc.Name, st}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	sm := make(map[string]Status)
+	for res := range resultCh {
+		sm[res.name] = res.status
+	}
+	return sm
+}
+
+// --- HTTP Transport Pool ---
+
 var (
 	transportSecure    *http.Transport
 	transportInsecure  *http.Transport
@@ -138,20 +302,19 @@ var (
 	transportOnce      sync.Once
 )
 
-// initHTTPTransports initializes the HTTP transport pool (called once from App)
 func initHTTPTransports() {
 	transportOnce.Do(func() {
 		transportSecure = &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 20,
 			IdleConnTimeout:     90 * time.Second,
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: false}, //nolint:gosec
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: false},
 		}
 		transportInsecure = &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 20,
 			IdleConnTimeout:     90 * time.Second,
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 		}
 
 		httpClientSecure = &http.Client{
@@ -176,12 +339,10 @@ func initHTTPTransports() {
 	})
 }
 
-// getHTTPTransport returns the secure HTTP transport for maintenance
 func getHTTPTransport() *http.Transport {
 	return transportSecure
 }
 
-// getHTTPClient returns a reusable http.Client
 func getHTTPClient(verifySSL bool) *http.Client {
 	if verifySSL {
 		return httpClientSecure
