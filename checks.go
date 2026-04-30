@@ -57,30 +57,40 @@ func (cbm *CircuitBreakerManager) getCircuitStateLocked(name string) *CircuitSta
 
 // ShouldCheck returns true if the service should be checked (circuit breaker + rate limiting)
 func (cbm *CircuitBreakerManager) ShouldCheck(name string) bool {
-	cbm.mu.RLock()
-	defer cbm.mu.RUnlock()
+	now := time.Now()
 
+	// 1) read phase
+	cbm.mu.RLock()
 	cb, exists := cbm.states[name]
 	if !exists {
+		cbm.mu.RUnlock()
 		return true
 	}
 
-	if time.Since(cb.LastCheck) < cb.MinInterval {
+	// rate limit
+	if now.Sub(cb.LastCheck) < cb.MinInterval {
+		cbm.mu.RUnlock()
 		return false
 	}
 
-	if cb.State == CircuitOpen {
-		if time.Since(cb.LastFailure) > 30*time.Second {
-			cbm.mu.RUnlock()
-			cbm.mu.Lock()
-			defer cbm.mu.Unlock()
-			cb2, exists2 := cbm.states[name]
-			if exists2 && cb2.State == CircuitOpen && time.Since(cb2.LastFailure) > 30*time.Second {
-				cb2.State = CircuitHalfOpen
-			}
-			return true
+	state := cb.State
+	lastFailure := cb.LastFailure
+	cbm.mu.RUnlock()
+
+	// 2) decision / optional write phase
+	if state == CircuitOpen {
+		if now.Sub(lastFailure) <= 30*time.Second {
+			return false
 		}
-		return false
+
+		// время прошло — переводим в half-open
+		cbm.mu.Lock()
+		cb2 := cbm.getCircuitStateLocked(name)
+		// повторная проверка под Lock
+		if cb2.State == CircuitOpen && now.Sub(cb2.LastFailure) > 30*time.Second {
+			cb2.State = CircuitHalfOpen
+		}
+		cbm.mu.Unlock()
 	}
 	return true
 }
