@@ -29,7 +29,7 @@ services:
           cpus: '0.1'
     networks:
       - homedash-net
-
+    restart: always
 networks:
   homedash-net:
     driver: bridge
