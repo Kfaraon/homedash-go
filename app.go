@@ -28,7 +28,6 @@ type App struct {
 	AdminAPIKey      string
 	RequireAdminAuth atomic.Bool
 	AllowedOrigins   string
-
 	// IP settings
 	IPProviders []string
 	IPCacheTTL  time.Duration
@@ -80,7 +79,6 @@ type AppState struct {
 // NewApp creates a fully initialized App
 func NewApp() (*App, error) {
 	adminAPIKey := getEnv("ADMIN_API_KEY", "")
-
 	app := &App{
 		ConfigFile:     getEnv("CONFIG_FILE", "config.json"),
 		CacheTTL:       3 * time.Second,
@@ -160,7 +158,6 @@ func (app *App) initTemplates() error {
 		"resolveIconColor": app.ResolveIconColor,
 		"resolveIconCDN":   app.ResolveIconCDN,
 	}
-
 	homeTmpl, err := template.New("home.html").Funcs(homeFuncs).ParseFiles("templates/home.html")
 	if err != nil {
 		return err
@@ -280,7 +277,7 @@ func (app *App) SetCache(cache map[string]Status) {
 func (app *App) GetStaleCache() (map[string]Status, bool) {
 	app.State.mu.RLock()
 	defer app.State.mu.RUnlock()
-	if len(app.State.stale) > 0 && time.Since(app.State.staleTS) < app.CacheTTL*5 {
+	if len(app.State.stale) > 0 && time.Since(app.State.staleTS) < 5*app.CacheTTL {
 		result := make(map[string]Status, len(app.State.stale))
 		for k, v := range app.State.stale {
 			result[k] = v
@@ -294,7 +291,6 @@ func (app *App) GetStaleCache() (map[string]Status, bool) {
 func (app *App) Run() error {
 	go app.startLazyCheckLoop()
 	app.StartConfigWatcher()
-
 	mux := app.buildRouter()
 
 	srv := &http.Server{
@@ -332,9 +328,10 @@ func (app *App) Run() error {
 	return nil
 }
 
-// startLazyCheckLoop — cycle with auto-pause on idle
+// startLazyCheckLoop — цикл с авто-паузой в простое
 func (app *App) startLazyCheckLoop() {
-	ticker := time.NewTicker(30 * time.Second)
+	interval := getDurationEnv("LAZY_CHECK_INTERVAL", 30*time.Second)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -402,7 +399,6 @@ func (app *App) trackAccessMiddleware(next http.Handler) http.Handler {
 // buildRouter constructs the HTTP router
 func (app *App) buildRouter() http.Handler {
 	mux := http.NewServeMux()
-
 	staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir("static")))
 	mux.Handle("/static/", staticHandler)
 
@@ -471,7 +467,6 @@ func (app *App) StartConfigWatcher() {
 		slog.Error("Error creating watcher", "error", err)
 		return
 	}
-
 	if err := w.Add("."); err != nil {
 		slog.Error("Error adding to watcher", "file", app.ConfigFile, "error", err)
 		w.Close()
@@ -549,7 +544,6 @@ func (app *App) StartConfigWatcher() {
 func (app *App) reloadConfig() {
 	app.reloadMu.Lock()
 	defer app.reloadMu.Unlock()
-
 	cfg, err := loadConfig(app.ConfigFile)
 	if err != nil {
 		slog.Error("Error reloading config", "error", err)
@@ -612,7 +606,6 @@ func newRateLimiter(maxTokens, refillRate int64) *rateLimiter {
 func (rl *rateLimiter) Allow() bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-
 	now := time.Now()
 	elapsed := now.Sub(rl.lastRefill).Seconds()
 	rl.tokens += int64(float64(rl.refillRate) * elapsed)
