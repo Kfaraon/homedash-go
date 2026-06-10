@@ -137,15 +137,44 @@ func (cbm *CircuitBreakerManager) Reset() {
 // checkService checks a single service
 func checkService(ctx context.Context, s Service, pingTimeout time.Duration) Status {
 	var httpOk, pingOk *bool
+	var wg sync.WaitGroup
+
+	type checkResult struct {
+		isHTTP bool
+		ok     bool
+	}
+	resCh := make(chan checkResult, 2)
 
 	if s.URL != "" {
-		ok := checkHTTP(ctx, s.URL, s.VerifySSL)
-		httpOk = &ok
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resCh <- checkResult{true, checkHTTP(ctx, s.URL, s.VerifySSL)}
+		}()
 	}
 
 	if s.IP != "" {
-		ok := checkPing(ctx, s.IP, pingTimeout)
-		pingOk = &ok
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resCh <- checkResult{false, checkPing(ctx, s.IP, pingTimeout)}
+		}()
+	}
+
+	// Закрываем канал, когда все горутины отработали
+	go func() {
+		wg.Wait()
+		close(resCh)
+	}()
+
+	// Собираем результаты без мьютексов
+	for res := range resCh {
+		ok := res.ok // локальная копия для указателя
+		if res.isHTTP {
+			httpOk = &ok
+		} else {
+			pingOk = &ok
+		}
 	}
 
 	avail := false
@@ -188,13 +217,22 @@ func checkHTTP(ctx context.Context, u string, verifySSL bool) bool {
 // checkPing performs host availability check
 func checkPing(ctx context.Context, ip string, pingTimeout time.Duration) bool {
 	host, port := extractHostAndPort(ip)
-
 	if port != "" {
 		return tcpConnect(ctx, host, port)
 	}
 
-	if tcpConnect(ctx, host, "80") || tcpConnect(ctx, host, "443") {
-		return true
+	// Параллельная проверка 80 и 443
+	ctxTcp, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	resultCh := make(chan bool, 2)
+	go func() { resultCh <- tcpConnect(ctxTcp, host, "80") }()
+	go func() { resultCh <- tcpConnect(ctxTcp, host, "443") }()
+
+	for i := 0; i < 2; i++ {
+		if <-resultCh {
+			return true // Успех! Отменяем вторую горутину через defer cancel()
+		}
 	}
 
 	return executePing(ctx, host, pingTimeout)
@@ -239,7 +277,7 @@ func executePing(ctx context.Context, ip string, pingTimeout time.Duration) bool
 
 // --- Worker pool for parallel checks ---
 
-func checkServicesInParallel(ctx context.Context, groups []Group, cb *CircuitBreakerManager, pingTimeout time.Duration, maxWorkers int) map[string]Status {
+func checkServicesInParallel(ctx context.Context, groups []Group, cb *CircuitBreakerManager, pingTimeout time.Duration, maxWorkers int, isInitialPoll bool) map[string]Status {
 	type serviceTask struct {
 		Svc         Service
 		PingTimeout time.Duration
@@ -259,8 +297,8 @@ func checkServicesInParallel(ctx context.Context, groups []Group, cb *CircuitBre
 	}
 
 	workers := maxWorkers
-	if len(tasks) < workers {
-		workers = len(tasks)
+	if isInitialPoll || len(tasks) < workers {
+		workers = len(tasks) // Burst-режим: опрашиваем всё сразу
 	}
 
 	taskCh := make(chan serviceTask, len(tasks))
@@ -314,13 +352,24 @@ var (
 
 func initHTTPTransports() {
 	transportOnce.Do(func() {
+		// Общий dialer с жесткими таймаутами на TCP-соединение
+		dialer := &net.Dialer{
+			Timeout:   2 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
+
 		transportSecure = &http.Transport{
+			DialContext:         dialer.DialContext, // <-- Используем dialer здесь
+			TLSHandshakeTimeout: 2 * time.Second,
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 20,
 			IdleConnTimeout:     90 * time.Second,
 			TLSClientConfig:     &tls.Config{InsecureSkipVerify: false},
 		}
+
 		transportInsecure = &http.Transport{
+			DialContext:         dialer.DialContext, // <-- И здесь
+			TLSHandshakeTimeout: 2 * time.Second,
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 20,
 			IdleConnTimeout:     90 * time.Second,

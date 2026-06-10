@@ -250,27 +250,9 @@ func (app *App) GetCache() map[string]Status {
 	app.State.mu.RLock()
 	defer app.State.mu.RUnlock()
 	if time.Since(app.State.cacheTS) < app.CacheTTL && len(app.State.cache) > 0 {
-		result := make(map[string]Status, len(app.State.cache))
-		for k, v := range app.State.cache {
-			result[k] = v
-		}
-		return result
+		return app.State.cache // Возвращаем ссылку, она read-only
 	}
 	return nil
-}
-
-// SetCache atomically updates cache with stale copy
-func (app *App) SetCache(cache map[string]Status) {
-	app.State.mu.Lock()
-	defer app.State.mu.Unlock()
-	app.State.cache = cache
-	app.State.cacheTS = time.Now()
-	// Save stale copy
-	app.State.stale = make(map[string]Status, len(cache))
-	for k, v := range cache {
-		app.State.stale[k] = v
-	}
-	app.State.staleTS = time.Now()
 }
 
 // GetStaleCache returns stale cache if still valid
@@ -278,13 +260,27 @@ func (app *App) GetStaleCache() (map[string]Status, bool) {
 	app.State.mu.RLock()
 	defer app.State.mu.RUnlock()
 	if len(app.State.stale) > 0 && time.Since(app.State.staleTS) < 5*app.CacheTTL {
-		result := make(map[string]Status, len(app.State.stale))
-		for k, v := range app.State.stale {
-			result[k] = v
-		}
-		return result, true
+		return app.State.stale, true // Возвращаем ссылку
 	}
 	return nil, false
+}
+
+// SetCache atomically updates cache with stale copy
+func (app *App) SetCache(cache map[string]Status) {
+	// 1. Готовим stale-копию ВНЕ лока, чтобы не блокировать UI
+	staleCopy := make(map[string]Status, len(cache))
+	for k, v := range cache {
+		staleCopy[k] = v
+	}
+	now := time.Now()
+
+	// 2. Мгновенная замена ссылок под локом
+	app.State.mu.Lock()
+	app.State.cache = cache
+	app.State.cacheTS = now
+	app.State.stale = staleCopy
+	app.State.staleTS = now
+	app.State.mu.Unlock()
 }
 
 // Run starts the HTTP server and blocks until shutdown
@@ -330,6 +326,9 @@ func (app *App) Run() error {
 
 // startLazyCheckLoop — цикл с авто-паузой в простое
 func (app *App) startLazyCheckLoop() {
+	// 1. Мгновенный первичный опрос в фоне
+	go app.refreshCacheIfNeeded()
+
 	interval := getDurationEnv("LAZY_CHECK_INTERVAL", 30*time.Second)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -374,7 +373,12 @@ func (app *App) refreshCacheIfNeeded() {
 	}()
 
 	groups := app.GetGroupsCopy()
-	sm := checkServicesInParallel(ctx, groups, app.circuitBreaker, app.PingTimeout, app.MaxWorkers)
+
+	// ИСПРАВЛЕНИЕ: Определяем, является ли это первичным опросом (пустой кэш)
+	isInitialPoll := app.GetCacheCount() == 0
+
+	// Передаем флаг isInitialPoll последним аргументом
+	sm := checkServicesInParallel(ctx, groups, app.circuitBreaker, app.PingTimeout, app.MaxWorkers, isInitialPoll)
 
 	close(done)
 
