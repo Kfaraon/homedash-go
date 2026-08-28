@@ -3,18 +3,17 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"os/exec"
-	"runtime"
 	"sync"
 	"time"
+
+	"github.com/go-ping/ping"
 )
 
-// --- Circuit Breaker Manager (replaces Metrics circuit breaker functionality) ---
+// --- Circuit Breaker Manager ---
 
 type CircuitStateEnum int
 
@@ -138,18 +137,13 @@ func (cbm *CircuitBreakerManager) Reset() {
 func checkService(ctx context.Context, s Service, pingTimeout time.Duration) Status {
 	var httpOk, pingOk *bool
 	var wg sync.WaitGroup
-
-	type checkResult struct {
-		isHTTP bool
-		ok     bool
-	}
-	resCh := make(chan checkResult, 2)
+	var httpRes, pingRes bool
 
 	if s.URL != "" {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resCh <- checkResult{true, checkHTTP(ctx, s.URL, s.VerifySSL)}
+			httpRes = checkHTTP(ctx, s.URL, s.VerifySSL)
 		}()
 	}
 
@@ -157,24 +151,17 @@ func checkService(ctx context.Context, s Service, pingTimeout time.Duration) Sta
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resCh <- checkResult{false, checkPing(ctx, s.IP, pingTimeout)}
+			pingRes = checkPing(ctx, s.IP, pingTimeout)
 		}()
 	}
 
-	// Закрываем канал, когда все горутины отработали
-	go func() {
-		wg.Wait()
-		close(resCh)
-	}()
+	wg.Wait()
 
-	// Собираем результаты без мьютексов
-	for res := range resCh {
-		ok := res.ok // локальная копия для указателя
-		if res.isHTTP {
-			httpOk = &ok
-		} else {
-			pingOk = &ok
-		}
+	if s.URL != "" {
+		httpOk = &httpRes
+	}
+	if s.IP != "" {
+		pingOk = &pingRes
 	}
 
 	avail := false
@@ -255,24 +242,32 @@ func tcpConnect(ctx context.Context, host, port string) bool {
 }
 
 func executePing(ctx context.Context, ip string, pingTimeout time.Duration) bool {
-	timeoutSec := int(pingTimeout.Seconds())
-	if timeoutSec < 1 {
-		timeoutSec = 1
-	}
-
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.CommandContext(ctx, "ping", "-n", "1", "-w", fmt.Sprintf("%d", timeoutSec*1000), ip)
-	default:
-		cmd = exec.CommandContext(ctx, "ping", "-c", "1", "-W", fmt.Sprintf("%d", timeoutSec), ip)
-	}
-
-	if err := cmd.Run(); err != nil {
-		slog.Debug("Ping failed", "host", ip, "error", err)
+	pinger, err := ping.NewPinger(ip)
+	if err != nil {
+		slog.Debug("Ping init failed", "host", ip, "error", err)
 		return false
 	}
-	return true
+
+	pinger.Count = 1
+	pinger.Timeout = pingTimeout
+	// SetPrivileged(false) использует UDP-сокеты для ICMP.
+	// Это позволяет пинговать без root-прав (что критично для appuser в Docker).
+	pinger.SetPrivileged(false)
+
+	done := make(chan struct{})
+	go func() {
+		pinger.Run()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		pinger.Stop()
+		return false
+	case <-done:
+		stats := pinger.Statistics()
+		return stats.PacketsRecv > 0
+	}
 }
 
 // --- Worker pool for parallel checks ---
@@ -359,7 +354,7 @@ func initHTTPTransports() {
 		}
 
 		transportSecure = &http.Transport{
-			DialContext:         dialer.DialContext, // <-- Используем dialer здесь
+			DialContext:         dialer.DialContext,
 			TLSHandshakeTimeout: 2 * time.Second,
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 20,
@@ -368,7 +363,7 @@ func initHTTPTransports() {
 		}
 
 		transportInsecure = &http.Transport{
-			DialContext:         dialer.DialContext, // <-- И здесь
+			DialContext:         dialer.DialContext,
 			TLSHandshakeTimeout: 2 * time.Second,
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 20,
