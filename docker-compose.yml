@@ -9,9 +9,6 @@ services:
       - ./data:/app/data
     environment:
       - MAX_WORKERS=${MAX_WORKERS:-20}
-      - USE_LRU_CACHE=${USE_LRU_CACHE:-false}
-      - LRU_CACHE_CAPACITY=${LRU_CACHE_CAPACITY:-1000}
-      - LRU_CACHE_TTL=${LRU_CACHE_TTL:-5m}
       - IDLE_TIMEOUT=${IDLE_TIMEOUT:-5m}
       - LAZY_CHECK_INTERVAL=${LAZY_CHECK_INTERVAL:-2m}
     healthcheck:
