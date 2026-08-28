@@ -144,7 +144,6 @@ PORT=8080 ADMIN_API_KEY=my-secret ./homedash
 ├── config.go            # Загрузка/валидация/атомарное сохранение config.json
 ├── icons.go             # IconResolver: автоподбор иконок, цвета, CDN, SVG-fallback
 ├── types.go             # Типы данных: Service, Group, Status, AdminConfig, IPCache
-├── lru_cache.go         # Thread-safe LRU-кэш с TTL (опциональная замена простого кэша)
 ├── templates/
 │   ├── home.html        # Шаблон дашборда (с функциями иконок)
 │   └── admin.html       # Шаблон админ-панели (vanilla JS)
