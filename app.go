@@ -35,10 +35,7 @@ type App struct {
 	IPCacheMu   sync.RWMutex
 
 	// Performance settings
-	MaxWorkers       int
-	UseLRUCache      bool
-	LRUCacheCapacity int
-	LRUCacheTTL      time.Duration
+	MaxWorkers int
 
 	// State
 	State *AppState
