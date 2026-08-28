@@ -78,7 +78,7 @@ func NewApp() (*App, error) {
 	adminAPIKey := getEnv("ADMIN_API_KEY", "")
 	app := &App{
 		ConfigFile:     getEnv("CONFIG_FILE", "config.json"),
-		CacheTTL:       3 * time.Second,
+		CacheTTL:       15 * time.Second,
 		ServerPort:     getEnv("PORT", "5000"),
 		CheckTimeout:   getDurationEnv("CHECK_TIMEOUT", 2*time.Second),
 		PingTimeout:    getDurationEnv("PING_TIMEOUT", 1*time.Second),
