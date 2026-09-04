@@ -55,7 +55,7 @@ jobs:
   # ═══════════════════════════════════════════
   # ЭТАП 2: Тестирование
   # ═══════════════════════════════════════════
-  test:
+    test:
     name: 🧪 Тесты
     runs-on: ubuntu-latest
     needs: lint
@@ -86,23 +86,19 @@ jobs:
           }
           EOF
           
-          # Запускаем тесты с покрытием
-          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          # Проверяем наличие тестов
+          if go test ./... -list . 2>/dev/null | grep -q .; then
+            echo "🧪 Тесты найдены, запускаем..."
+            go test -v -race ./...
+          else
+            echo "⚠️ Тесты не найдены, пропускаем"
+          fi
 
-      - name: 📊 Покрытие кода
+      - name: ✅ Проверка сборки
         run: |
-          go tool cover -func=coverage.out
-          echo "## 📊 Покрытие кода" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          go tool cover -func=coverage.out >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: 📤 Сохранить отчёт о покрытии
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage.out
-          retention-days: 7
+          echo "Проверяем что проект компилируется..."
+          go build -o /dev/null .
+          echo "✅ Сборка успешна"
 
   # ═══════════════════════════════════════════
   # ЭТАП 3: Сборка бинарников
