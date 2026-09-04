@@ -120,7 +120,7 @@
             </div>
             <div class="form-group">
                 <label for="modalServiceURL">URL (опционально)</label>
-                <input type="text" id="modalServiceURL" placeholder="https://example.com">
+                <input type="text" id="modalServiceURL" placeholder="https://example.com" oninput="this.value = this.value.toLowerCase()">
                 <div class="field-error" id="modalServiceURLError"></div>
             </div>
             <div class="form-group">
@@ -482,7 +482,7 @@
             const oldName = document.getElementById('modalOldName').value;
             const service = {
                 name: document.getElementById('modalServiceName').value.trim(),
-                url: document.getElementById('modalServiceURL').value.trim(),
+                url: document.getElementById('modalServiceURL').value.trim().toLowerCase(),
                 ip: document.getElementById('modalServiceIP').value.trim(),
                 verify_ssl: document.getElementById('modalServiceSSL').checked
             };
