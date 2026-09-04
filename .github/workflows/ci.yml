@@ -114,22 +114,10 @@ jobs:
             arch: amd64
             goos: linux
             goarch: amd64
-          - os: linux
-            arch: arm64
-            goos: linux
-            goarch: arm64
           - os: windows
             arch: amd64
             goos: windows
             goarch: amd64
-          - os: darwin
-            arch: amd64
-            goos: darwin
-            goarch: amd64
-          - os: darwin
-            arch: arm64
-            goos: darwin
-            goarch: arm64
     steps:
       - name: 📥 Клонировать репозиторий
         uses: actions/checkout@v4
