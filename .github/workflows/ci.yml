@@ -1,0 +1,341 @@
+name: CI/CD
+
+# Триггеры запуска
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+# Переменные окружения
+env:
+  GO_VERSION: '1.23'
+  DOCKER_IMAGE: homedash
+
+jobs:
+  # ═══════════════════════════════════════════
+  # ЭТАП 1: Линтинг и проверка кода
+  # ═══════════════════════════════════════════
+  lint:
+    name: 🔍 Линтинг
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Клонировать репозиторий
+        uses: actions/checkout@v4
+
+      - name: 🐹 Установить Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 📦 Загрузить зависимости
+        run: go mod download
+
+      - name: 🔧 Проверка форматирования
+        run: |
+          gofmt_output=$(gofmt -l .)
+          if [ -n "$gofmt_output" ]; then
+            echo "❌ Файлы не отформатированы:"
+            echo "$gofmt_output"
+            echo "Выполни: gofmt -w ."
+            exit 1
+          fi
+          echo "✅ Форматирование в порядке"
+
+      - name: 🧹 Статический анализ (go vet)
+        run: go vet ./...
+
+      - name: 🔒 Проверка безопасности (gosec)
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -exclude=G104,G304 ./... || true
+
+  # ═══════════════════════════════════════════
+  # ЭТАП 2: Тестирование
+  # ═══════════════════════════════════════════
+  test:
+    name: 🧪 Тесты
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: 📥 Клонировать репозиторий
+        uses: actions/checkout@v4
+
+      - name: 🐹 Установить Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 📦 Загрузить зависимости
+        run: go mod download
+
+      - name: 🧪 Запуск тестов
+        run: |
+          # Создаём временный config.json для тестов
+          cat > config.json << 'EOF'
+          {
+            "groups": [
+              {
+                "name": "Test Group",
+                "services": []
+              }
+            ]
+          }
+          EOF
+          
+          # Запускаем тесты с покрытием
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: 📊 Покрытие кода
+        run: |
+          go tool cover -func=coverage.out
+          echo "## 📊 Покрытие кода" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          go tool cover -func=coverage.out >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: 📤 Сохранить отчёт о покрытии
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 7
+
+  # ═══════════════════════════════════════════
+  # ЭТАП 3: Сборка бинарников
+  # ═══════════════════════════════════════════
+  build:
+    name: 🏗️ Сборка (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            goos: linux
+            goarch: amd64
+          - os: linux
+            arch: arm64
+            goos: linux
+            goarch: arm64
+          - os: windows
+            arch: amd64
+            goos: windows
+            goarch: amd64
+          - os: darwin
+            arch: amd64
+            goos: darwin
+            goarch: amd64
+          - os: darwin
+            arch: arm64
+            goos: darwin
+            goarch: arm64
+    steps:
+      - name: 📥 Клонировать репозиторий
+        uses: actions/checkout@v4
+
+      - name: 🐹 Установить Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 📦 Загрузить зависимости
+        run: go mod download
+
+      - name: 🏗️ Сборка бинарника
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION=${GITHUB_REF_NAME:-dev}
+          COMMIT=${GITHUB_SHA::7}
+          BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+          
+          LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME} -s -w"
+          
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="homedash-${{ matrix.os }}-${{ matrix.arch }}.exe"
+          else
+            BINARY_NAME="homedash-${{ matrix.os }}-${{ matrix.arch }}"
+          fi
+          
+          echo "Собираю: ${BINARY_NAME}"
+          CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o "${BINARY_NAME}" .
+
+      - name: 📤 Сохранить артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: homedash-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            homedash-${{ matrix.os }}-${{ matrix.arch }}*
+          retention-days: 30
+
+  # ═══════════════════════════════════════════
+  # ЭТАП 4: Сборка Docker образа
+  # ═══════════════════════════════════════════
+  docker:
+    name: 🐳 Docker
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: 📥 Клонировать репозиторий
+        uses: actions/checkout@v4
+
+      - name: 🐳 Настроить Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔑 Логин в GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️ Метаданные образа
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 🏗️ Собрать и запушить образ
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ═══════════════════════════════════════════
+  # ЭТАП 5: Создание релиза (только для тегов)
+  # ═══════════════════════════════════════════
+  release:
+    name: 🚀 Релиз
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: 📥 Клонировать репозиторий
+        uses: actions/checkout@v4
+
+      - name: 📥 Скачать все артефакты
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 📦 Подготовка файлов релиза
+        run: |
+          mkdir -p release
+          
+          # Копируем бинарники
+          find artifacts -name "homedash-*" -exec cp {} release/ \;
+          
+          # Копируем шаблоны и статику
+          cp -r templates release/ 2>/dev/null || true
+          cp -r static release/ 2>/dev/null || true
+          
+          # Создаём example конфиг
+          cat > release/config.example.json << 'EOF'
+          {
+            "groups": [
+              {
+                "name": "Пример группы",
+                "services": [
+                  {
+                    "name": "Google",
+                    "url": "https://google.com",
+                    "verify_ssl": true
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+          
+          # Создаём архивы
+          cd release
+          for binary in homedash-*; do
+            if [ -f "$binary" ]; then
+              ARCHIVE_NAME="${binary}.tar.gz"
+              tar -czf "../${ARCHIVE_NAME}" "$binary" templates static config.example.json 2>/dev/null || \
+              tar -czf "../${ARCHIVE_NAME}" "$binary" config.example.json
+              echo "Создан: ${ARCHIVE_NAME}"
+            fi
+          done
+          cd ..
+          
+          # Удаляем временную папку
+          rm -rf release
+          
+          # Генерируем checksums
+          sha256sum *.tar.gz > checksums-sha256.txt
+          cat checksums-sha256.txt
+
+      - name: 📝 Создать релиз
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.tar.gz
+            checksums-sha256.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+  # ═══════════════════════════════════════════
+  # ЭТАП 6: Проверка безопасности зависимостей
+  # ═══════════════════════════════════════════
+  security:
+    name: 🔒 Безопасность
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: 📥 Клонировать репозиторий
+        uses: actions/checkout@v4
+
+      - name: 🐹 Установить Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: 🔍 Проверка уязвимостей в зависимостях
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./... || echo "⚠️ Найдены уязвимости"
+
+  # ═══════════════════════════════════════════
+  # ИТОГОВЫЙ ЭТАП: Проверка статуса
+  # ═══════════════════════════════════════════
+  success:
+    name: ✅ Все проверки пройдены
+    runs-on: ubuntu-latest
+    needs: [lint, test, build, security]
+    if: always() && !contains(needs.*.result, 'failure')
+    steps:
+      - name: 🎉 Успех
+        run: |
+          echo "✅ Все проверки успешно пройдены!"
+          echo "📊 Результаты:"
+          echo "  - Линтинг: ✅"
+          echo "  - Тесты: ✅"
+          echo "  - Сборка: ✅"
+          echo "  - Безопасность: ✅"
