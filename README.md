@@ -1,84 +1,136 @@
-# homedash-go 🖥️
+# Homedash
 
-> Легковесный дашборд для мониторинга домашних сервисов на Go
+[![Go Version](https://img.shields.io/badge/Go-1.23-blue.svg)](https://golang.org/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Homedash-go** — это self-hosted веб-приложение для визуализации состояния ваших сервисов. Поддерживает проверку доступности через HTTP и Ping, автоматический подбор иконок, админ-панель для управления конфигурацией и горячую перезагрузку без перезапуска.
+**Homedash** — легковесная панель мониторинга домашних сервисов с автоматическим обнаружением статуса, интеллектуальным кэшированием и энергосберегающим режимом.
 
----
+## ✨ Возможности
 
-## ✨ Ключевые возможности
-
-### 🔍 Мониторинг
-- **Двойная проверка**: HTTP-запросы + ICMP ping (с TCP-fallback на порты 80/443)
-- **Circuit Breaker**: автоматическая пауза проверок при 3+ последовательных ошибках, восстановление через 30с
-- **Worker Pool**: параллельные проверки с настраиваемым лимитом воркеров (`MAX_WORKERS`)
-- **Stale-while-revalidate**: возврат закэшированных данных при фоновом обновлении
-
-### 🎨 Визуализация
-- **Автоподбор иконок**: 100+ предустановленных сервисов через Iconify CDN (Simple Icons + MDI)
-- **Умные заглушки**: SVG с первой буквой сервиса, если иконка не найдена
-- **Пастельные цвета**: детерминированная генерация фона по имени сервиса (Golden Angle hashing)
-- **Тёмная/светлая тема**: переключение с сохранением в `localStorage`
-
-### ⚙️ Управление
-- **Веб-админка**: CRUD для групп и сервисов, drag&drop сортировка, перемещение между группами
-- **Hot-reload**: изменение `config.json` подхватывается автоматически (debounce 500мс)
-- **Атомарное сохранение**: запись конфига через temp-file + rename для целостности
-- **API-аутентификация**: Bearer-токен через `ADMIN_API_KEY` для защиты админ-эндпоинтов
-
-### 🛡️ Надёжность
-- **Graceful shutdown**: корректная обработка SIGINT/SIGTERM с таймаутом 5с
-- **Health check**: эндпоинт `/health` с проверкой состояния конфига и кэша
-- **Rate limiting**: token bucket (20 burst, 10/sec refill) для админ-API
-- **CORS middleware**: гибкая настройка разрешённых origins
-
-### 🐳 Контейнеризация
-- **Multi-stage Docker**: сборка в golang:alpine, запуск в минимальном alpine:runtime
-- **Non-root user**: запуск от `appuser:appgroup` (UID/GID 1000)
-- **Cross-platform**: поддержка linux/amd64, linux/arm64 через BUILDPLATFORM
-- **Healthcheck**: встроенный скрипт проверки доступности
-
----
+- 🚀 **Мгновенный запуск** — работает из коробки
+- 🎯 **Мониторинг HTTP и Ping** — проверка доступности сервисов
+- 🔒 **SSL/TLS проверка** — поддержка самоподписанных сертификатов
+- 🎨 **Адаптивный дизайн** — тёмная и светлая темы
+- 🛠️ **Админ-панель** — управление сервисами через веб-интерфейс
+- 🔄 **Hot reload** — автоматическая перезагрузка при изменении конфигурации
+- ⚡ **Circuit Breaker** — защита от перегрузки недоступных сервисов
+- 💤 **Energy-saving mode** — автоматическая пауза в режиме простоя
+- 🏎️ **Worker Pool** — параллельная проверка до 20 сервисов одновременно
+- 🌐 **CORS и Rate Limiting** — безопасность API
+- 📱 **Mobile-friendly** — работает на любых устройствах
+- 🎯 **Drag-and-drop** — сортировка сервисов перетаскиванием
 
 ## 🚀 Быстрый старт
 
-### Локально (требует Go 1.21+)
+### 1. Клонирование репозитория
+
 ```bash
-# Клонирование
-git clone https://github.com/Kfaraon/homedash-go
+git clone https://github.com/Kfaraon/homedash-go.git
 cd homedash-go
-
-# Запуск
-go run .
-
-# Доступ:
-# • Дашборд: http://localhost:5000
-# • Админка:  http://localhost:5000/admin (требует ADMIN_API_KEY)
-
-### Docker
-
-```bash
-docker compose up -d
 ```
-## ⚙️ Конфигурация
 
-### config.json
+### 2. Создание конфигурации
+
+Создайте файл `config.json`:
 
 ```json
 {
   "groups": [
     {
-      "name": "Внешние сервисы",
+      "name": "Медиа сервисы",
       "services": [
-        { "name": "GitHub", "url": "https://github.com" },
-        { "name": "Cloudflare", "url": "https://cloudflare.com", "verify_ssl": true }
+        {
+          "name": "Plex",
+          "url": "http://192.168.1.100:32400",
+          "icon": "plex",
+          "verify_ssl": false
+        },
+        {
+          "name": "Jellyfin",
+          "url": "http://192.168.1.101:8096",
+          "icon": "jellyfin",
+          "verify_ssl": false
+        }
       ]
     },
     {
-      "name": "Локальные",
+      "name": "Сеть",
       "services": [
-        { "name": "Nginx", "url": "http://192.168.1.10", "ip": "192.168.1.10" },
-        { "name": "Redis", "ip": "192.168.1.10:6379" }
+        {
+          "name": "Роутер",
+          "ip": "192.168.1.1",
+          "icon": "router"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 3. Запуск
+
+```bash
+go run .
+```
+
+Откройте браузер: **http://localhost:5000**
+
+## 📦 Установка
+
+### Требования
+
+- Go 1.23 или выше
+- Linux / macOS / Windows
+
+### Сборка бинарного файла
+
+```bash
+# Linux / macOS
+go build -o homedash
+
+# Windows
+go build -o homedash.exe
+```
+
+### Запуск
+
+```bash
+./homedash
+```
+
+## ⚙️ Конфигурация
+
+### Переменные окружения
+
+| Переменная | По умолчанию | Описание |
+|------------|--------------|----------|
+| `PORT` | `5000` | Порт HTTP сервера |
+| `CONFIG_FILE` | `config.json` | Путь к файлу конфигурации |
+| `CHECK_TIMEOUT` | `2s` | Таймаут HTTP проверки |
+| `PING_TIMEOUT` | `1s` | Таймаут ICMP ping проверки |
+| `MAX_WORKERS` | `20` | Максимальное количество параллельных проверок |
+| `ADMIN_API_KEY` | `""` | API ключ для защиты админ-панели |
+| `ALLOWED_ORIGINS` | `""` | Разрешённые CORS origin (через запятую) |
+| `IDLE_TIMEOUT` | `5m` | Время бездействия перед переходом в спящий режим |
+| `LAZY_CHECK_INTERVAL` | `30s` | Интервал проверки в активном режиме |
+| `IP_PROVIDERS` | `https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip` | Сервисы для определения внешнего IP |
+| `IP_CACHE_TTL` | `10m` | Время жизни кэша внешнего IP |
+
+### Структура config.json
+
+```json
+{
+  "groups": [
+    {
+      "name": "Название группы",
+      "services": [
+        {
+          "name": "Название сервиса",
+          "url": "https://example.com",
+          "ip": "192.168.1.1",
+          "icon": "service-icon",
+          "verify_ssl": true
+        }
       ]
     }
   ],
@@ -88,80 +140,268 @@ docker compose up -d
 }
 ```
 
-**Поддерживаемые форматы:**
+**Поля сервиса:**
 
-| Формат | Описание | Пример |
-|--------|----------|--------|
-| **С группами** | Объект с `"groups": [...]` | Как выше |
-| **Без групп** | Простой список сервисов | `[{"name": "...", "url": "..."}]` |
+- `name` (обязательно) — название сервиса
+- `url` (опционально) — HTTP/HTTPS URL для проверки
+- `ip` (опционально) — IP адрес для ping проверки
+- `icon` (опционально) — имя иконки (автоматическое определение по названию)
+- `verify_ssl` (опционально, по умолчанию `true`) — проверять SSL сертификат
 
-При формате без групп автоматически создаётся группа «Все сервисы».
+## 🖥️ Использование
 
-### Поля сервиса
+### Главная страница
 
-| Поле | Тип | Обязательное | Описание |
-|------|-----|:------------:|----------|
-| `name` | string | ✅ | Имя сервиса (по нему подбирается иконка) |
-| `url` | string | ❌ | HTTP URL для проверки (минимум одно из `url`/`ip`) |
-| `ip` | string | ❌ | IP-адрес для ping проверки |
-| `icon` | string | ❌ | Явная иконка `prefix:name` (переопределяет автоподбор) |
-| `verify_ssl` | bool | ❌ | Проверять SSL-сертификат (по умолчанию `false`) |
+- 🟢 **Зелёный** — сервис доступен
+- 🔴 **Красный** — сервис недоступен
+- ⚪ **Серый** — сервис в режиме ожидания
 
-### Переменные окружения
+### Админ-панель
 
-| Переменная | По умолчанию | Описание |
-|------------|--------------|----------|
-| `PORT` | `5000` | Порт HTTP-сервера |
-| `CHECK_TIMEOUT` | `2s` | Таймаут HTTP-запросов |
-| `PING_TIMEOUT` | `1s` | Таймаут ping-проверки |
-| `ADMIN_API_KEY` | _(пусто)_ | Секретный ключ для админ-API (Bearer-токен) |
-| `ALLOWED_ORIGINS` | `*` | CORS origins через запятую |
-| `CONFIG_FILE` | `config.json` | Путь к файлу конфигурации |
-| `ICONS_CONFIG_PATH` | `data/icons.json` | Путь к конфигу иконок |
-| `IP_PROVIDERS` | `https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip,https://ident.me` | Fallback-провайдеры для определения публичного IP |
-| `IP_CACHE_TTL` | `10m` | TTL кэша публичного IP |
-| `MAX_WORKERS` | `20` | Макс. количество параллельных проверок |
-| `IDLE_TIMEOUT` | `5m` | Период неактивности перед паузой проверок |
-| `TZ` | `Asia/Yekaterinburg` | Часовой пояс для логов |
+Доступна по адресу: **http://localhost:5000/admin**
 
-Пример:
+**Возможности:**
+- ➕ Добавление/удаление групп и сервисов
+- ✏️ Редактирование настроек
+- 🔄 Drag-and-drop сортировка
+- 🎨 Визуальный редактор иконок
+
+**Защита админ-панели:**
+
+Установите переменную окружения `ADMIN_API_KEY` для включения авторизации:
 
 ```bash
-PORT=8080 ADMIN_API_KEY=my-secret ./homedash
+export ADMIN_API_KEY=your-secret-key
 ```
 
-> 🔒 **Важно:** без `ADMIN_API_KEY` админ-панель отключена (возвращает 403).  
-> Для доступа передавайте заголовок: `Authorization: Bearer my-secret`
+Затем добавляйте заголовок к запросам:
+
+```
+Authorization: Bearer your-secret-key
+```
+
+## 🔌 API
+
+### Публичные endpoints
+
+#### Получить статус всех сервисов
+
+```bash
+GET /api/status
+```
+
+**Ответ:**
+
+```json
+{
+  "services": {
+    "Plex": {
+      "available": true,
+      "http": true,
+      "ping": null
+    }
+  }
+}
+```
+
+#### Получить внешний IP
+
+```bash
+GET /api/myip
+```
+
+#### Health check
+
+```bash
+GET /health
+```
+
+**Ответ:**
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
+### Admin API (требует авторизации)
+
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/api/admin/groups` | Получить все группы |
+| `POST` | `/api/admin/group` | Добавить группу |
+| `PUT` | `/api/admin/group` | Переименовать группу |
+| `DELETE` | `/api/admin/group` | Удалить группу |
+| `POST` | `/api/admin/service` | Добавить сервис |
+| `PUT` | `/api/admin/service` | Обновить сервис |
+| `DELETE` | `/api/admin/service` | Удалить сервис |
+| `POST` | `/api/admin/service/move` | Переместить сервис |
+| `POST` | `/api/admin/service/reorder` | Изменить порядок сервисов |
+
+**Пример добавления сервиса:**
+
+```bash
+curl -X POST http://localhost:5000/api/admin/service \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "group_name": "Медиа сервисы",
+    "service": {
+      "name": "Plex",
+      "url": "http://192.168.1.100:32400",
+      "verify_ssl": false
+    }
+  }'
+```
+
+## 🐳 Docker
+
+### Создание Dockerfile
+
+```dockerfile
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o homedash .
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates iputils
+
+WORKDIR /root/
+COPY --from=builder /app/homedash .
+COPY --from=builder /app/templates ./templates
+COPY --from=builder /app/static ./static
+
+EXPOSE 5000
+CMD ["./homedash"]
+```
+
+### Сборка и запуск
+
+```bash
+docker build -t homedash .
+docker run -d \
+  -p 5000:5000 \
+  -v $(pwd)/config.json:/root/config.json \
+  -e ADMIN_API_KEY=your-secret-key \
+  --name homedash \
+  homedash
+```
 
 ## 📁 Структура проекта
 
 ```
-.
-├── main.go              # Точка входа, инициализация, graceful shutdown
-├── app.go               # App struct: роутинг, middleware, config watcher, cache
-├── handlers.go          # HTTP handlers: домашняя страница, API, админка, CORS
-├── checks.go            # Проверки: HTTP, Ping, TCP-fallback, circuit breaker, worker pool
-├── config.go            # Загрузка/валидация/атомарное сохранение config.json
-├── icons.go             # IconResolver: автоподбор иконок, цвета, CDN, SVG-fallback
-├── types.go             # Типы данных: Service, Group, Status, AdminConfig, IPCache
+homedash-go/
+├── main.go              # Точка входа
+├── app.go               # Инициализация приложения
+├── checks.go            # Логика проверок сервисов
+├── types.go             # Структуры данных
+├── admin.go             # Обработчики админ-панели
+├── config.go            # Загрузка и валидация конфигурации
+├── icons.go             # Определение иконок
+├── ip.go                # Определение внешнего IP
 ├── templates/
-│   ├── home.html        # Шаблон дашборда (с функциями иконок)
-│   └── admin.html       # Шаблон админ-панели (vanilla JS)
+│   ├── home.html        # Шаблон главной страницы
+│   └── admin.html       # Шаблон админ-панели
 ├── static/
-│   ├── home.css         # Стили дашборда (адаптив, темы, анимации)
-│   └── admin.css        # Стили админки (drag&drop, модальные окна)
-├── dockerfile           # Multi-stage сборка, non-root, healthcheck
-├── docker-compose.yml   # Готовая конфигурация для запуска
-├── healthcheck.sh       # Скрипт проверки доступности для Docker
-└── data/
-    └── icons.json       # Конфигурация иконок (категории, алиасы, fallback)
+│   ├── home.css         # Стили главной страницы
+│   ├── admin.css        # Стили админ-панели
+│   └── icons/           # SVG иконки
+├── config.json          # Конфигурационный файл
+├── go.mod               # Зависимости Go
+└── README.md            # Документация
 ```
 
-## 🎨 Поддерживаемые иконки
+## 🔧 Особенности архитектуры
 
-Автоматически подбираются по имени сервиса из Iconify (Simple Icons + MDI). Если иконка не найдена — генерируется SVG-заглушка с первой буквой на фирменном фоне.
-(Полный список: Proxmox, AdGuard, Home Assistant, Docker, Grafana, Nginx, PostgreSQL, Pi-hole, Plex, Nextcloud, GitHub, Telegram, Spotify и 100+ других)
+### Circuit Breaker
 
-## 📝 Лицензия
+Автоматически отключает проверку сервисов после 3 неудачных попыток на 30 секунд, затем пробует снова (half-open state).
 
-MIT
+### Lazy Checking
+
+Приложение переходит в энергосберегающий режим, если не было запросов в течение `IDLE_TIMEOUT` (по умолчанию 5 минут).
+
+### Worker Pool
+
+Параллельная проверка сервисов с настраиваемым количеством воркеров (по умолчанию 20).
+
+### Hot Reload
+
+Автоматическая перезагрузка конфигурации при изменении `config.json` с debounce 500ms.
+
+### Кэширование
+
+- **Активный кэш** — 15 секунд
+- **Stale кэш** — 75 секунд (показывается во время обновления)
+
+## ❓ FAQ
+
+### Почему сервисы не проверяются?
+
+Проверьте:
+1. Корректность URL/IP в `config.json`
+2. Доступность сервисов из сети, где запущен homedash
+3. Логи приложения (возможно circuit breaker заблокировал проверку)
+
+### Как добавить самоподписанный SSL сертификат?
+
+Установите `verify_ssl: false` для конкретного сервиса:
+
+```json
+{
+  "name": "My Service",
+  "url": "https://self-signed.local",
+  "verify_ssl": false
+}
+```
+
+### Можно ли использовать без config.json?
+
+Нет, конфигурационный файл обязателен. Но вы можете изменить его путь через переменную окружения `CONFIG_FILE`.
+
+### Как изменить частоту проверок?
+
+Используйте переменные окружения:
+- `LAZY_CHECK_INTERVAL` — интервал между проверками
+- `IDLE_TIMEOUT` — время перехода в спящий режим
+
+### Почему админ-панель не открывается?
+
+Если установлен `ADMIN_API_KEY`, добавьте заголовок авторизации или уберите ключ для отключения защиты.
+
+## 🤝 Вклад в развитие
+
+Pull requests приветствуются! Для серьёзных изменений сначала создайте issue для обсуждения.
+
+### Разработка
+
+```bash
+# Установка зависимостей
+go mod download
+
+# Запуск в режиме разработки
+go run .
+
+# Тесты
+go test ./...
+```
+
+## 📄 Лицензия
+
+MIT License — см. файл [LICENSE](LICENSE) для деталей.
+
+## 🙏 Благодарности
+
+- [Go](https://golang.org/) — язык программирования
+- [fsnotify](https://github.com/fsnotify/fsnotify) — отслеживание изменений файлов
+- [go-ping](https://github.com/go-ping/ping) — ICMP ping библиотека
+
+---
+
+**Homedash** создан с ❤️ для мониторинга домашних сервисов.
