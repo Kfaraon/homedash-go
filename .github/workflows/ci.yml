@@ -28,7 +28,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache: false
 
       - name: 📦 Загрузить зависимости
         run: go mod download
@@ -53,7 +53,7 @@ jobs:
           gosec -exclude=G104,G304 ./... || true
 
   # ═══════════════════════════════════════════
-  # ЭТАП 2: Тестирование (упрощённое)
+  # ЭТАП 2: Тестирование
   # ═══════════════════════════════════════════
   test:
     name: 🧪 Тесты
@@ -67,14 +67,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache: false
 
       - name: 📦 Загрузить зависимости
         run: go mod download
 
       - name: 🧪 Запуск тестов
         run: |
-          # Создаём временный config.json для тестов
           cat > config.json << 'EOF'
           {
             "groups": [
@@ -86,7 +85,6 @@ jobs:
           }
           EOF
           
-          # Проверяем наличие тестов
           if go test ./... -list . 2>/dev/null | grep -q .; then
             echo "🧪 Тесты найдены, запускаем..."
             go test -v -race ./...
@@ -126,7 +124,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache: false
 
       - name: 📦 Загрузить зависимости
         run: go mod download
@@ -209,7 +207,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ═══════════════════════════════════════════
-  # ЭТАП 5: Создание релиза (только для тегов)
+  # ЭТАП 5: Создание релиза
   # ═══════════════════════════════════════════
   release:
     name: 🚀 Релиз
@@ -231,14 +229,11 @@ jobs:
         run: |
           mkdir -p release
           
-          # Копируем бинарники
           find artifacts -name "homedash-*" -exec cp {} release/ \;
           
-          # Копируем шаблоны и статику
           cp -r templates release/ 2>/dev/null || true
           cp -r static release/ 2>/dev/null || true
           
-          # Создаём example конфиг
           cat > release/config.example.json << 'EOF'
           {
             "groups": [
@@ -256,7 +251,6 @@ jobs:
           }
           EOF
           
-          # Создаём архивы
           cd release
           for binary in homedash-*; do
             if [ -f "$binary" ]; then
@@ -268,10 +262,8 @@ jobs:
           done
           cd ..
           
-          # Удаляем временную папку
           rm -rf release
           
-          # Генерируем checksums
           sha256sum *.tar.gz > checksums-sha256.txt
           cat checksums-sha256.txt
 
@@ -286,7 +278,7 @@ jobs:
           prerelease: false
 
   # ═══════════════════════════════════════════
-  # ЭТАП 6: Проверка безопасности зависимостей
+  # ЭТАП 6: Безопасность
   # ═══════════════════════════════════════════
   security:
     name: 🔒 Безопасность
@@ -300,14 +292,15 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: false
 
-      - name: 🔍 Проверка уязвимостей в зависимостях
+      - name: 🔍 Проверка уязвимостей
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./... || echo "⚠️ Найдены уязвимости"
 
   # ═══════════════════════════════════════════
-  # ИТОГОВЫЙ ЭТАП: Проверка статуса
+  # ИТОГ
   # ═══════════════════════════════════════════
   success:
     name: ✅ Все проверки пройдены
@@ -318,8 +311,3 @@ jobs:
       - name: 🎉 Успех
         run: |
           echo "✅ Все проверки успешно пройдены!"
-          echo "📊 Результаты:"
-          echo "  - Линтинг: ✅"
-          echo "  - Тесты: ✅"
-          echo "  - Сборка: ✅"
-          echo "  - Безопасность: ✅"
