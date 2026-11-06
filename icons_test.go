@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,18 +64,11 @@ func TestIconsFallbackSVGCyrillic(t *testing.T) {
 	r := NewIconResolver()
 
 	uri := r.getCachedFallbackSVG("Роутер")
-	const prefix = "data:image/svg+xml;charset=utf-8;base64,"
-	if !strings.HasPrefix(uri, prefix) {
-		t.Fatalf("unexpected fallback URI: %q", uri)
-	}
-	svg, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(uri, prefix))
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !utf8.Valid(svg) {
+	svg := decodeDataURI(t, uri)
+	if !utf8.ValidString(svg) {
 		t.Fatalf("fallback SVG is not valid UTF-8: %q", svg)
 	}
-	if !strings.Contains(string(svg), "Р") {
+	if !strings.Contains(svg, "Р") {
 		t.Fatalf("fallback SVG does not contain the Cyrillic letter: %q", svg)
 	}
 }
@@ -160,9 +153,81 @@ func TestIconsCandidatesExplicitSingle(t *testing.T) {
 	r := NewIconResolver()
 
 	cands := r.IconCandidates("whatever", "simple-icons:foo")
-	if len(cands) != 1 || !strings.Contains(cands[0], "simple-icons/foo.svg") {
-		t.Fatalf("explicit icon must yield a single candidate, got %v", cands)
+	if len(cands) != 2 {
+		t.Fatalf("explicit icon must yield icon + generated fallback, got %v", cands)
 	}
+	if !strings.Contains(cands[0], "simple-icons/foo.svg") {
+		t.Fatalf("first candidate = %q", cands[0])
+	}
+	if !strings.HasPrefix(cands[1], "data:image/svg+xml") {
+		t.Fatalf("last candidate must be generated initials, got %q", cands[1])
+	}
+}
+
+func TestIconsInitials(t *testing.T) {
+	tests := []struct{ name, want string }{
+		{"SmartApe", "SA"},
+		{"OpenCode", "OC"},
+		{"Мой Сервис", "МС"},
+		{"nginx", "N"},
+		{"Роутер", "Р"},
+		{"rocket-chat", "RC"},
+		{"my_great.service", "MG"},
+		{"Home Assistant", "HA"},
+		{"3dprinter", "3D"},
+		{"", ""},
+		{"   ", ""},
+	}
+	for _, tc := range tests {
+		if got := initials(tc.name); got != tc.want {
+			t.Errorf("initials(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Неизвестный сервис не должен получать generic-иконку категории (например,
+// mdi:help-circle): последним кандидатом всегда идут инициалы.
+func TestIconsUnknownEndsWithInitials(t *testing.T) {
+	t.Setenv("ICONS_CONFIG_PATH", "data/icons.json")
+	r := NewIconResolver()
+
+	for _, name := range []string{"Zzz Unknown Tool", "Definitely Not Real", "Мой Самописный Сервис"} {
+		cands := r.IconCandidates(name, "")
+		last := cands[len(cands)-1]
+		if !strings.HasPrefix(last, "data:image/svg+xml") {
+			t.Fatalf("%q: last candidate must be generated initials, got %q", name, last)
+		}
+		want := initials(name)
+		svg := decodeDataURI(t, last)
+		if !strings.Contains(svg, ">"+want+"<") {
+			t.Fatalf("%q: generated SVG must contain %q, got %q", name, want, svg)
+		}
+	}
+}
+
+// Ни один кандидат для неизвестного сервиса не должен быть mdi:help-circle.
+func TestIconsUnknownHasNoGenericCategoryIcon(t *testing.T) {
+	t.Setenv("ICONS_CONFIG_PATH", "data/icons.json")
+	r := NewIconResolver()
+
+	for _, u := range r.IconCandidates("SmartApe", "") {
+		if strings.Contains(u, "help-circle") || strings.Contains(u, "mdi/application") {
+			t.Fatalf("unknown service got generic icon: %q", u)
+		}
+	}
+}
+
+func decodeDataURI(t *testing.T, uri string) string {
+	t.Helper()
+	const prefix = "data:image/svg+xml;charset=utf-8,"
+	if !strings.HasPrefix(uri, prefix) {
+		t.Fatalf("not a percent-encoded data URI: %q", uri)
+	}
+	svg, err := url.QueryUnescape(strings.TrimPrefix(uri, prefix))
+	if err != nil {
+		t.Fatalf("unescape: %v", err)
+	}
+	return svg
 }
 
 // lookup_enabled=false в icons.json отключает подбор из iconify.

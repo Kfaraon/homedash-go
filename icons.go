@@ -1,10 +1,10 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"html"
 	"log/slog"
 	"math"
 	"net/url"
@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Category описывает fallback-поведение для категории сервисов.
@@ -353,20 +355,33 @@ func (r *IconResolver) prepareSortedCategories() {
 	r.sortedCategories = keys
 }
 
-// ResolveIcon возвращает строку иконки (например "simple-icons:nginx") по имени сервиса.
+// fallbackIconFor выбирает иконку для известного каталогу сервиса, у которого
+// в записи не задан icon: категорийная подсказка или глобальный fallback.
+func (r *IconResolver) fallbackIconFor(normalized string) string {
+	return r.selectFallbackIcon(normalized)
+}
+
+// ResolveIcon возвращает строку иконки (например "simple-icons:nginx") по имени
+// сервиса. Для неизвестного сервиса возвращается пустая строка: вызывающая
+// сторона должна сгенерировать инициалы (см. IconCandidates).
 func (r *IconResolver) ResolveIcon(name, explicitIcon string) string {
 	if explicitIcon != "" {
 		return explicitIcon
 	}
 	n := r.normalizeName(name)
 	if v, ok := r.cache.Load(n); ok {
-		return v.(*iconEntry).Icon
+		if e := v.(*iconEntry); e != nil && e.Icon != "" {
+			return e.Icon
+		}
 	}
 	if e := r.findEntry(n); e != nil {
 		r.cache.Store(n, e)
-		return e.Icon
+		if e.Icon != "" {
+			return e.Icon
+		}
+		return r.fallbackIconFor(n)
 	}
-	return r.selectFallbackIcon(n)
+	return ""
 }
 
 // ResolveColor возвращает цвет фона для иконки.
@@ -450,30 +465,42 @@ func (r *IconResolver) iconifySlugs(name string) []string {
 
 // IconCandidates возвращает упорядоченный список URL иконок, которые нужно
 // попробовать для сервиса. Первый элемент — основной src, остальные — запасные
-// (проверяются в браузере через onerror). Если сервис отсутствует в icons.json
-// и включён lookup, сначала пробуются иконки iconify по имени сервиса, а
-// категорийная заглушка идёт последней.
+// (проверяются в браузере через onerror).
+//
+// Если сервиса нет в каталоге и включён lookup, сначала пробуются иконки
+// iconify по имени сервиса. Важно: категорийная заглушка в цепочку НЕ
+// добавляется — иначе она (например, mdi:help-circle) успешно загружается и
+// браузер никогда не доходит до буквенной заглушки. Последним элементом всегда
+// идёт сгенерированная иконка из инициалов имени.
 func (r *IconResolver) IconCandidates(name, explicitIcon string) []string {
-	primary := r.ResolveIconCDN(name, explicitIcon)
-	if explicitIcon != "" || !r.lookupEnabled {
-		return []string{primary}
+	generated := r.getCachedFallbackSVG(name)
+
+	// Явно заданная иконка — доверяем пользователю, но оставляем буквенный
+	// фолбэк на случай битого id/недоступного URL.
+	if explicitIcon != "" {
+		return []string{r.ResolveIconCDN(name, explicitIcon), generated}
 	}
 
 	n := r.normalizeName(name)
 	if n == "" {
-		return []string{primary}
+		return []string{generated}
 	}
-	// Точное совпадение или нечёткий поиск по каталогу — используем его.
+	// Известный сервис (точное или нечёткое совпадение) — одна иконка.
 	if _, ok := r.iconMap[n]; ok {
-		return []string{primary}
+		return []string{r.ResolveIconCDN(name, "")}
 	}
 	if r.findEntry(n) != nil {
-		return []string{primary}
+		return []string{r.ResolveIconCDN(name, "")}
+	}
+
+	// Неизвестный сервис: без lookup сразу генерируем по инициалам.
+	if !r.lookupEnabled {
+		return []string{generated}
 	}
 
 	slugs := r.iconifySlugs(name)
 	if len(slugs) == 0 {
-		return []string{primary}
+		return []string{generated}
 	}
 
 	seen := map[string]bool{}
@@ -488,9 +515,9 @@ func (r *IconResolver) IconCandidates(name, explicitIcon string) []string {
 			urls = append(urls, u)
 		}
 	}
-	// Заглушка категории — в самом конце.
-	if !seen[primary] {
-		urls = append(urls, primary)
+	// Последним — сгенерированная иконка по инициалам.
+	if len(urls) == 0 || !seen[generated] {
+		urls = append(urls, generated)
 	}
 	return urls
 }
@@ -503,7 +530,8 @@ func (r *IconResolver) ResolveIconCDN(name, explicitIcon string) string {
 		return v.(string)
 	}
 	icon := strings.TrimSpace(r.ResolveIcon(name, explicitIcon))
-	if strings.HasPrefix(icon, "http://") || strings.HasPrefix(icon, "https://") || strings.HasPrefix(icon, "data:") {
+	if strings.HasPrefix(icon, "http://") || strings.HasPrefix(icon, "https://") ||
+		strings.HasPrefix(icon, "data:") || strings.HasPrefix(icon, "/") {
 		r.cdnCache.Store(cacheKey, icon)
 		return icon
 	}
@@ -747,27 +775,94 @@ func hueToRgb(p, q, t float64) float64 {
 	return p
 }
 
-// getCachedFallbackSVG возвращает data:URI заглушки в виде буквы.
+// getCachedFallbackSVG возвращает data:URI сгенерированной заглушки:
+// инициалы из имени сервиса (1–2 буквы) на пастельном фоне.
 func (r *IconResolver) getCachedFallbackSVG(name string) string {
-	char := "?"
-	if t := strings.TrimSpace(name); t != "" {
-		runes := []rune(t)
-		char = strings.ToUpper(string(runes[0]))
+	label := initials(name)
+	if label == "" {
+		label = "?"
 	}
-	if v, ok := r.svgCache.Load(char); ok {
+	if v, ok := r.svgCache.Load(label); ok {
 		return v.(string)
 	}
-	svg := r.generateFallbackSVGForChar(char)
-	r.svgCache.Store(char, svg)
+	svg := r.generateFallbackSVG(label)
+	r.svgCache.Store(label, svg)
 	return svg
 }
 
-func (r *IconResolver) generateFallbackSVGForChar(char string) string {
-	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="%s" width="40" height="40">
-<rect width="40" height="40" rx="8" fill="#%s"/>
-<text x="20" y="28" text-anchor="middle" font-size="%d" font-family="%s" fill="#%s">%s</text>
-</svg>`, r.svgViewBox, r.svgBgColor, r.svgFontSize, r.svgFontFamily, r.svgTextColor, char)
-	return "data:image/svg+xml;charset=utf-8;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
+// initials возвращает 1–2 первые буквы имени: по словам и по границам
+// camelCase. "SmartApe" → "SA", "Мой Сервис" → "МС", "OpenCode" → "OC",
+// "nginx" → "N".
+func initials(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+
+	var letters []rune
+	var word []rune
+
+	flush := func() {
+		if len(word) > 0 {
+			letters = append(letters, word[0])
+			word = word[:0]
+		}
+	}
+
+	prevLowerOrDigit := false
+	for _, r := range name {
+		switch {
+		case r == ' ' || r == '-' || r == '_' || r == '.' || r == '/' || r == '(' || r == ')' || r == '+' || r == ',':
+			flush()
+			prevLowerOrDigit = false
+		case r >= '0' && r <= '9':
+			if len(word) == 0 && len(letters) < 2 {
+				letters = append(letters, r)
+			} else {
+				word = append(word, r)
+			}
+			prevLowerOrDigit = true
+		default:
+			// Граница camelCase: строчная/цифра -> заглавная.
+			if unicode.IsUpper(r) && prevLowerOrDigit {
+				flush()
+			}
+			word = append(word, r)
+			prevLowerOrDigit = unicode.IsLower(r) || unicode.IsDigit(r)
+		}
+		if len(letters) >= 2 {
+			break
+		}
+	}
+	if len(letters) < 2 {
+		flush()
+	}
+	if len(letters) > 2 {
+		letters = letters[:2]
+	}
+	return strings.ToUpper(string(letters))
+}
+
+// generateFallbackSVG рисует инициалы. Фон прозрачный: цвет даёт «пузырёк»
+// вокруг картинки, поэтому заглушка не спорит с пастельным фоном карточки.
+func (r *IconResolver) generateFallbackSVG(label string) string {
+	fontSize := r.svgFontSize
+	if utf8.RuneCountInString(label) > 1 {
+		fontSize = int(float64(fontSize) * 0.78)
+		if fontSize < 10 {
+			fontSize = 10
+		}
+	}
+	// Вертикальный центр текста в viewBox 0 0 40 40.
+	y := 20 + float64(fontSize)*0.36
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="%s" width="40" height="40">`+
+		`<text x="20" y="%.1f" text-anchor="middle" font-size="%d" font-family="%s" font-weight="600" fill="#%s">%s</text>`+
+		`</svg>`, r.svgViewBox, y, fontSize, r.svgFontFamily, r.svgTextColor, html.EscapeString(label))
+	// Percent-encoding (не base64): в MIME-типе есть «+», и html/template
+	// экранирует его в &#43;, что ломает data-URI в атрибутах. QueryEscape
+	// превращает пробел в «+», поэтому меняем его на %20.
+	encoded := strings.ReplaceAll(url.QueryEscape(svg), "+", "%20")
+	return "data:image/svg+xml;charset=utf-8," + encoded
 }
 
 func (r *IconResolver) fnvHash(s string) uint32 {

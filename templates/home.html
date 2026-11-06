@@ -46,7 +46,7 @@
                     <div class="card-header">
                         <div class="icon-bubble" style="background-color: {{resolveColor .Name}};">
                             <img class="service-icon-img"
-                                 src="{{resolveIconCDN .Name .Icon}}"
+                                 src="{{index (iconCandidates .Name .Icon) 0}}"
                                  data-icon-candidates="{{range $i, $u := iconCandidates .Name .Icon}}{{if $i}} {{end}}{{$u}}{{end}}"
                                  alt=""
                                  loading="lazy"
@@ -229,9 +229,9 @@
                 const originalSrc = img.getAttribute('src');
                 if (originalSrc) candidates = [originalSrc];
             }
-            // data:URL заглушки не нуждается в сетевой загрузке — сразу рисуем букву.
+            // data:URL (сгенерированные инициалы) не нуждается в сетевой
+            // загрузке — оставляем как есть.
             if (candidates.length > 0 && candidates[0].startsWith('data:')) {
-                img.src = generateFallbackSVG(serviceName, bgColor);
                 return;
             }
 

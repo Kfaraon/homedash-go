@@ -133,6 +133,7 @@
     {"key": "tp-link", "icon": "simple-icons:tplink", "bg": "#DFF5E6", "color": "#4AC461", "category": "network", "search": ["omada"], "priority": 0},
     {"key": "asus", "icon": "simple-icons:asus", "bg": "#E3F2FD", "color": "#000000", "category": "hardware", "search": ["rog", "router"], "priority": 0},
     {"key": "qnap", "icon": "simple-icons:qnap", "bg": "#D9EDF2", "color": "#0066CC", "category": "storage", "search": ["nas"], "priority": 0},
+    {"key": "smartape", "icon": "/static/icons/smartape.svg", "bg": "#EDE7F3", "color": "#5F4B8B", "category": "storage", "search": ["smart ape", "хостинг", "vps"], "priority": 0},
     {"key": "prowlarr", "icon": "selfhst:prowlarr", "bg": "#FDE8D0", "color": "", "category": "media", "search": ["indexer"], "priority": 0},
     {"key": "deluge", "icon": "selfhst:deluge", "bg": "#D9EDF2", "color": "", "category": "media", "search": ["torrent"], "priority": 0},
     {"key": "navidrome", "icon": "selfhst:navidrome", "bg": "#E8E8FF", "color": "", "category": "media", "search": ["music"], "priority": 1},
