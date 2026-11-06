@@ -8,185 +8,128 @@ import (
 	"strings"
 )
 
-// configData holds loaded config with admin settings
+// configData holds loaded config.
 type configData struct {
 	groups []Group
-	admin  *AdminConfig
 }
 
-// loadGroups loads groups and admin config from the configuration file in a single read
-func loadGroups(configFile string) ([]Group, error) {
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		return nil, fmt.Errorf("чтение %s: %w", configFile, err)
-	}
-
-	// Format with groups and optional admin config
-	var root struct {
-		Groups []Group      `json:"groups"`
-		Admin  *AdminConfig `json:"admin,omitempty"`
-	}
-	if err := json.Unmarshal(data, &root); err == nil && len(root.Groups) > 0 {
-		defaultVerifySSL(root.Groups)
-		return root.Groups, nil
-	}
-
-	// Flat list of services
-	var svcs []Service
-	if err := json.Unmarshal(data, &svcs); err == nil && len(svcs) > 0 {
-		for i := range svcs {
-			svcs[i] = defaultServiceSSL(svcs[i])
-		}
-		return []Group{{Name: "Все сервисы", Services: svcs}}, nil
-	}
-
-	return nil, fmt.Errorf("неверный формат: ожидается 'groups' или список сервисов")
-}
-
-// loadConfig loads groups and admin config in a single file read
+// loadConfig loads groups from the configuration file.
 func loadConfig(configFile string) (*configData, error) {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return nil, fmt.Errorf("чтение %s: %w", configFile, err)
 	}
 
+	// Format with groups.
 	var root struct {
-		Groups []Group      `json:"groups"`
-		Admin  *AdminConfig `json:"admin,omitempty"`
+		Groups []Group `json:"groups"`
 	}
 	if err := json.Unmarshal(data, &root); err == nil && len(root.Groups) > 0 {
-		defaultVerifySSL(root.Groups)
-		return &configData{groups: root.Groups, admin: root.Admin}, nil
+		return &configData{groups: root.Groups}, nil
 	}
 
-	// Flat list of services
+	// Flat list of services.
 	var svcs []Service
 	if err := json.Unmarshal(data, &svcs); err == nil && len(svcs) > 0 {
-		for i := range svcs {
-			svcs[i] = defaultServiceSSL(svcs[i])
-		}
 		return &configData{
 			groups: []Group{{Name: "Все сервисы", Services: svcs}},
-			admin:  root.Admin,
 		}, nil
 	}
 
 	return nil, fmt.Errorf("неверный формат: ожидается 'groups' или список сервисов")
 }
 
-// loadAdminConfig loads admin config from the configuration file
-func loadAdminConfig(configFile string) (*AdminConfig, error) {
+// loadGroups loads groups from the configuration file.
+func loadGroups(configFile string) ([]Group, error) {
 	cfg, err := loadConfig(configFile)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.admin == nil {
-		return &AdminConfig{RequireAPIKey: true}, nil
-	}
-	return cfg.admin, nil
+	return cfg.groups, nil
 }
 
-// defaultVerifySSL sets VerifySSL=true if not explicitly set in config
-func defaultVerifySSL(groups []Group) {
-	for i := range groups {
-		for j := range groups[i].Services {
-			groups[i].Services[j] = defaultServiceSSL(groups[i].Services[j])
-		}
-	}
-}
-
-// defaultServiceSSL sets VerifySSL=true by default (secure-first)
-func defaultServiceSSL(s Service) Service {
-	// If verify_ssl was not explicitly set in JSON, default to true
-	// We detect "not set" by checking if the raw JSON field is missing
-	// Since Go defaults to false for bool, we need a different approach.
-	// For backward compatibility with existing configs that omit verify_ssl,
-	// we keep the default as false (existing behavior). Users can explicitly
-	// set verify_ssl: true in their config.
-	// NOTE: Changing this default would break existing deployments.
-	// The field comment in types.go documents the intended default.
-	return s
-}
-
-// validateGroups validates the group structure
+// validateGroups validates the group structure. Service names must be unique
+// across the whole configuration because their names are used as status keys.
 func validateGroups(groups []Group) error {
 	if len(groups) == 0 {
 		return fmt.Errorf("список групп пуст")
 	}
+
+	groupNames := make(map[string]bool, len(groups))
+	serviceNames := make(map[string]string) // lowercase name -> group name
+
 	for i, g := range groups {
-		if g.Name == "" {
+		if strings.TrimSpace(g.Name) == "" {
 			return fmt.Errorf("группа #%d: пустое имя", i)
 		}
-		seen := make(map[string]bool)
+		groupKey := strings.ToLower(strings.TrimSpace(g.Name))
+		if groupNames[groupKey] {
+			return fmt.Errorf("дубликат имени группы: %q", g.Name)
+		}
+		groupNames[groupKey] = true
+
 		for j, s := range g.Services {
-			if s.Name == "" {
+			if strings.TrimSpace(s.Name) == "" {
 				return fmt.Errorf("группа %q, сервис #%d: пустое имя", g.Name, j)
 			}
-			if s.URL == "" && s.IP == "" {
+			if strings.TrimSpace(s.URL) == "" && strings.TrimSpace(s.IP) == "" {
 				return fmt.Errorf("группа %q, сервис %q: не указан URL или IP", g.Name, s.Name)
 			}
-			key := strings.ToLower(s.Name)
-			if seen[key] {
-				return fmt.Errorf("группа %q, сервис %q: дубликат имени сервиса", g.Name, s.Name)
+			if err := validateURL(s.URL, fmt.Sprintf("группа %q, сервис %q: URL", g.Name, s.Name)); err != nil {
+				return err
 			}
-			seen[key] = true
+			if err := validateIP(s.IP, fmt.Sprintf("группа %q, сервис %q: IP", g.Name, s.Name)); err != nil {
+				return err
+			}
+
+			key := strings.ToLower(strings.TrimSpace(s.Name))
+			if prevGroup, ok := serviceNames[key]; ok {
+				return fmt.Errorf("сервис %q уже существует в группе %q (имена сервисов должны быть уникальны)", s.Name, prevGroup)
+			}
+			serviceNames[key] = g.Name
 		}
 	}
 	return nil
 }
 
-// validateGroupsWithWarnings validates and returns warnings (e.g. duplicate names)
-func validateGroupsWithWarnings(groups []Group) ([]string, error) {
-	var warnings []string
-	if len(groups) == 0 {
-		return nil, fmt.Errorf("список групп пуст")
-	}
+// cloneGroups returns a deep copy of groups.
+func cloneGroups(groups []Group) []Group {
+	result := make([]Group, len(groups))
 	for i, g := range groups {
-		if g.Name == "" {
-			return nil, fmt.Errorf("группа #%d: пустое имя", i)
+		result[i] = Group{
+			Name:     g.Name,
+			Services: make([]Service, len(g.Services)),
 		}
-		seen := make(map[string]bool)
-		for j, s := range g.Services {
-			if s.Name == "" {
-				return nil, fmt.Errorf("группа %q, сервис #%d: пустое имя", g.Name, j)
-			}
-			if s.URL == "" && s.IP == "" {
-				return nil, fmt.Errorf("группа %q, сервис %q: не указан URL или IP", g.Name, s.Name)
-			}
-			key := strings.ToLower(s.Name)
-			if seen[key] {
-				warnings = append(warnings, fmt.Sprintf("Duplicate service name in group %q: %q", g.Name, s.Name))
-			}
-			seen[key] = true
-		}
+		copy(result[i].Services, g.Services)
 	}
-	return warnings, nil
+	return result
 }
 
-// saveGroupsToFile saves groups to config.json with atomic write
+// saveGroupsToFile saves groups to config.json with an atomic write.
 func saveGroupsToFile(configFile string, groups []Group) error {
-	return saveConfigToFile(configFile, groups, nil)
+	return saveConfigToFile(configFile, groups)
 }
 
-// saveConfigToFile saves full config (groups + admin) with atomic write
-func saveConfigToFile(configFile string, groups []Group, admin *AdminConfig) error {
+// saveConfigToFile saves groups with an atomic write, preserving the existing
+// file mode and syncing data before the rename.
+func saveConfigToFile(configFile string, groups []Group) error {
 	data := struct {
-		Groups []Group      `json:"groups"`
-		Admin  *AdminConfig `json:"admin,omitempty"`
+		Groups []Group `json:"groups"`
 	}{
 		Groups: groups,
-		Admin:  admin,
 	}
 
 	jsonData, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal JSON: %w", err)
 	}
-
-	// Add newline at end
 	jsonData = append(jsonData, '\n')
 
-	// Atomic write: write to temp file in same directory, then rename
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(configFile); err == nil {
+		mode = info.Mode().Perm()
+	}
+
 	dir := filepath.Dir(configFile)
 	tmpFile, err := os.CreateTemp(dir, ".config-*.tmp")
 	if err != nil {
@@ -194,10 +137,22 @@ func saveConfigToFile(configFile string, groups []Group, admin *AdminConfig) err
 	}
 	tmpName := tmpFile.Name()
 
-	if _, err := tmpFile.Write(jsonData); err != nil {
+	cleanup := func() {
 		tmpFile.Close()
 		os.Remove(tmpName)
+	}
+
+	if err := tmpFile.Chmod(mode); err != nil {
+		cleanup()
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+	if _, err := tmpFile.Write(jsonData); err != nil {
+		cleanup()
 		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("sync temp file: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {
 		os.Remove(tmpName)

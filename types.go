@@ -7,18 +7,13 @@ import (
 
 // ─── Types ───
 
-// AdminConfig — настройки админ-панели
-type AdminConfig struct {
-	RequireAPIKey bool `json:"require_api_key"` // default: true (require API key)
-}
-
 // Service описывает один сервис для мониторинга
 type Service struct {
 	Name      string `json:"name"`
 	URL       string `json:"url"`
 	IP        string `json:"ip"`
 	Icon      string `json:"icon,omitempty"`
-	VerifySSL bool   `json:"verify_ssl"` // default: true (SSL verification enabled)
+	VerifySSL bool   `json:"verify_ssl"` // default: false (SSL verification disabled unless explicitly enabled)
 }
 
 // Group — логическая группа сервисов

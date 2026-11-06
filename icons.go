@@ -65,6 +65,13 @@ type IconResolver struct {
 	svgTextColor  string
 	svgFontSize   int
 	svgFontFamily string
+
+	// lookupEnabled включает подбор иконки напрямую из iconify, когда сервис
+	// отсутствует в icons.json. Сервер не делает сетевых запросов: он лишь
+	// формирует ссылку вида "<collection>:<slug>", которую загружает браузер,
+	// а шаблон при 404 показывает буквенную заглушку.
+	lookupEnabled     bool
+	lookupCollections []string
 }
 
 // NewIconResolver загружает конфиг из JSON и строит индексы.
@@ -80,6 +87,10 @@ func NewIconResolver() *IconResolver {
 		pastelVal:    0.9,
 		defaultBg:    "#E3F2FD",
 		fallbackIcon: "mdi:server",
+
+		// Подбор из iconify по имени сервиса.
+		lookupEnabled:     true,
+		lookupCollections: []string{"selfhst", "simple-icons", "logos"},
 
 		normRegex:    regexp.MustCompile(`[^a-zа-яё0-9 ]+`),
 		normReplacer: strings.NewReplacer("-", " ", "_", " ", ".", " "),
@@ -147,13 +158,21 @@ func (r *IconResolver) loadIconsFromJSON(path string) error {
 		Defaults   struct {
 			CDNTemplate  string `json:"cdn_template"`
 			FallbackIcon string `json:"fallback_icon"`
-			Pastel       struct {
-				Sat, Bright float64
-				Bg          string
+			// LookupEnabled/LookupCollections управляют подбором иконки из iconify
+			// по имени сервиса (когда сервиса нет в каталоге).
+			LookupEnabled     *bool    `json:"lookup_enabled"`
+			LookupCollections []string `json:"lookup_collections"`
+			Pastel            struct {
+				Sat    float64 `json:"sat"`
+				Bright float64 `json:"bright"`
+				Bg     string  `json:"bg"`
 			} `json:"pastel_colors"`
 			SVG struct {
-				ViewBox, Bg, Text, FontFamily string
-				Size                          int
+				ViewBox    string `json:"view_box"`
+				Bg         string `json:"bg_color"`
+				Text       string `json:"text_color"`
+				FontFamily string `json:"font_family"`
+				Size       int    `json:"font_size"`
 			} `json:"fallback_svg"`
 		} `json:"defaults"`
 		Norm struct {
@@ -203,6 +222,20 @@ func (r *IconResolver) loadIconsFromJSON(path string) error {
 	}
 	if c := strings.TrimSpace(cfg.Defaults.FallbackIcon); c != "" {
 		r.fallbackIcon = c
+	}
+	if cfg.Defaults.LookupEnabled != nil {
+		r.lookupEnabled = *cfg.Defaults.LookupEnabled
+	}
+	if len(cfg.Defaults.LookupCollections) > 0 {
+		colls := make([]string, 0, len(cfg.Defaults.LookupCollections))
+		for _, c := range cfg.Defaults.LookupCollections {
+			if c = strings.TrimSpace(c); c != "" {
+				colls = append(colls, c)
+			}
+		}
+		if len(colls) > 0 {
+			r.lookupCollections = colls
+		}
 	}
 	if cfg.Defaults.Pastel.Sat > 0 {
 		r.pastelSat = cfg.Defaults.Pastel.Sat
@@ -384,6 +417,84 @@ func (r *IconResolver) ResolveIconColor(name string) string {
 	return r.selectFallbackIconColor(n)
 }
 
+// buildCDNURL формирует URL иконки iconify. Пустой color означает «не навязывать
+// цвет» — полезно для многоцветных наборов (например, logos).
+func (r *IconResolver) buildCDNURL(collection, iconName, color string) string {
+	u := strings.TrimSpace(r.cdnTemplate)
+	u = strings.ReplaceAll(u, "{collection}", url.PathEscape(collection))
+	u = strings.ReplaceAll(u, "{icon}", url.PathEscape(iconName))
+	if color == "" {
+		u = strings.ReplaceAll(u, "?color={color}", "")
+		u = strings.ReplaceAll(u, "&color={color}", "")
+		u = strings.TrimSuffix(u, "?")
+		return u
+	}
+	return strings.ReplaceAll(u, "{color}", color)
+}
+
+// iconifySlugs строит возможные slug'и iconify из имени сервиса.
+// Для "Rocket Chat" это ["rocketchat", "rocket-chat"]: набор selfhst
+// использует дефисные имена, simple-icons — слитные.
+func (r *IconResolver) iconifySlugs(name string) []string {
+	tokens := strings.Fields(r.normalizeName(name))
+	if len(tokens) == 0 {
+		return nil
+	}
+	joined := strings.Join(tokens, "")
+	hyphenated := strings.Join(tokens, "-")
+	if joined == hyphenated {
+		return []string{joined}
+	}
+	return []string{joined, hyphenated}
+}
+
+// IconCandidates возвращает упорядоченный список URL иконок, которые нужно
+// попробовать для сервиса. Первый элемент — основной src, остальные — запасные
+// (проверяются в браузере через onerror). Если сервис отсутствует в icons.json
+// и включён lookup, сначала пробуются иконки iconify по имени сервиса, а
+// категорийная заглушка идёт последней.
+func (r *IconResolver) IconCandidates(name, explicitIcon string) []string {
+	primary := r.ResolveIconCDN(name, explicitIcon)
+	if explicitIcon != "" || !r.lookupEnabled {
+		return []string{primary}
+	}
+
+	n := r.normalizeName(name)
+	if n == "" {
+		return []string{primary}
+	}
+	// Точное совпадение или нечёткий поиск по каталогу — используем его.
+	if _, ok := r.iconMap[n]; ok {
+		return []string{primary}
+	}
+	if r.findEntry(n) != nil {
+		return []string{primary}
+	}
+
+	slugs := r.iconifySlugs(name)
+	if len(slugs) == 0 {
+		return []string{primary}
+	}
+
+	seen := map[string]bool{}
+	urls := make([]string, 0, len(r.lookupCollections)*len(slugs)+1)
+	for _, coll := range r.lookupCollections {
+		for _, slug := range slugs {
+			u := r.buildCDNURL(coll, slug, "")
+			if seen[u] {
+				continue
+			}
+			seen[u] = true
+			urls = append(urls, u)
+		}
+	}
+	// Заглушка категории — в самом конце.
+	if !seen[primary] {
+		urls = append(urls, primary)
+	}
+	return urls
+}
+
 // ResolveIconCDN формирует полный URL или data:URI для отображения иконки.
 func (r *IconResolver) ResolveIconCDN(name, explicitIcon string) string {
 	n := r.normalizeName(name)
@@ -413,11 +524,7 @@ func (r *IconResolver) ResolveIconCDN(name, explicitIcon string) string {
 		color = "1f2328"
 	}
 
-	u := strings.TrimSpace(r.cdnTemplate)
-	u = strings.ReplaceAll(u, "{collection}", url.PathEscape(collection))
-	u = strings.ReplaceAll(u, "{icon}", url.PathEscape(iconName))
-	u = strings.ReplaceAll(u, "{color}", color)
-
+	u := r.buildCDNURL(collection, iconName, color)
 	r.cdnCache.Store(cacheKey, u)
 	return u
 }
@@ -505,11 +612,15 @@ func (r *IconResolver) findEntry(normalized string) *iconEntry {
 			score += intersection / (1.0 + extra*0.5)
 		}
 
-		score += float64(e.Priority)
-
-		if score > 0 {
-			candidates = append(candidates, scored{e, score})
+		// Приоритет учитывается только как бонус к уже найденному
+		// лексическому совпадению. Иначе запись с ненулевым priority
+		// «перетягивала» бы на себя все неизвестные имена (например,
+		// любой сервис получал иконку Home Assistant).
+		if score <= 0 {
+			continue
 		}
+		score += float64(e.Priority)
+		candidates = append(candidates, scored{e, score})
 	}
 
 	if len(candidates) == 0 {
@@ -602,17 +713,6 @@ func (r *IconResolver) generatePastelColor(s string) string {
 	return color
 }
 
-// GetServiceColors возвращает фон и контрастный цвет текста с учётом яркости (WCAG)
-func (r *IconResolver) GetServiceColors(s string) (bg, fg string) {
-	bg = r.generatePastelColor(s)
-	if calculateLuminance(bg) > 0.65 {
-		fg = "#1f2328" // тёмный текст на светлом фоне
-	} else {
-		fg = "#ffffff" // белый текст на тёмном фоне
-	}
-	return bg, fg
-}
-
 // hslToRgb конвертирует HSL (0–1) в RGB (0–1)
 func hslToRgb(h, s, l float64) (r, g, b float64) {
 	if s == 0 {
@@ -647,34 +747,12 @@ func hueToRgb(p, q, t float64) float64 {
 	return p
 }
 
-// calculateLuminance считает относительную яркость цвета (WCAG 2.1)
-func calculateLuminance(hex string) float64 {
-	hex = strings.TrimPrefix(hex, "#")
-	if len(hex) != 6 {
-		return 0.5
-	}
-	var rgb uint32
-	fmt.Sscanf(hex, "%x", &rgb)
-
-	toLinear := func(c uint8) float64 {
-		v := float64(c) / 255.0
-		if v <= 0.03928 {
-			return v / 12.92
-		}
-		return math.Pow((v+0.055)/1.055, 2.4)
-	}
-
-	r := toLinear(byte(rgb >> 16))
-	g := toLinear(byte((rgb >> 8) & 0xFF))
-	b := toLinear(byte(rgb & 0xFF))
-	return 0.2126*r + 0.7152*g + 0.0722*b
-}
-
 // getCachedFallbackSVG возвращает data:URI заглушки в виде буквы.
 func (r *IconResolver) getCachedFallbackSVG(name string) string {
 	char := "?"
-	if t := strings.TrimSpace(name); len(t) > 0 {
-		char = strings.ToUpper(t[:1])
+	if t := strings.TrimSpace(name); t != "" {
+		runes := []rune(t)
+		char = strings.ToUpper(string(runes[0]))
 	}
 	if v, ok := r.svgCache.Load(char); ok {
 		return v.(string)

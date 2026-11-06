@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // ─── Validation ───
@@ -23,7 +25,7 @@ func validateName(name, label string) error {
 	if len(strings.TrimSpace(name)) == 0 {
 		return fmt.Errorf("%s обязательно", label)
 	}
-	if len(name) > maxNameLength {
+	if utf8.RuneCountInString(name) > maxNameLength {
 		return fmt.Errorf("%s должен быть не длиннее %d символов", label, maxNameLength)
 	}
 	if !nameRegex.MatchString(name) {
@@ -33,7 +35,7 @@ func validateName(name, label string) error {
 }
 
 func validateURL(u, label string) error {
-	if u == "" {
+	if strings.TrimSpace(u) == "" {
 		return nil
 	}
 	parsed, err := url.ParseRequestURI(u)
@@ -43,11 +45,14 @@ func validateURL(u, label string) error {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return fmt.Errorf("%s должен использовать схему http или https", label)
 	}
+	if parsed.Host == "" {
+		return fmt.Errorf("%s должен содержать хост", label)
+	}
 	return nil
 }
 
 func validateIP(ip, label string) error {
-	if ip == "" {
+	if strings.TrimSpace(ip) == "" {
 		return nil
 	}
 	if net.ParseIP(ip) == nil {
@@ -56,42 +61,118 @@ func validateIP(ip, label string) error {
 	return nil
 }
 
-// ─── Admin Middleware ───
+func normalizeService(s Service) Service {
+	s.Name = strings.TrimSpace(s.Name)
+	s.URL = strings.TrimSpace(s.URL)
+	s.IP = strings.TrimSpace(s.IP)
+	s.Icon = strings.TrimSpace(s.Icon)
+	return s
+}
 
-// adminAuthMiddleware — API key check for admin endpoints
-func (app *App) adminAuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions {
-			next.ServeHTTP(w, r)
-			return
+func validateService(s Service) error {
+	if err := validateName(s.Name, "Название сервиса"); err != nil {
+		return err
+	}
+	if s.URL == "" && s.IP == "" {
+		return fmt.Errorf("Необходимо указать URL или IP")
+	}
+	if err := validateURL(s.URL, "URL сервиса"); err != nil {
+		return err
+	}
+	if err := validateIP(s.IP, "IP-адрес сервиса"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ─── Admin helpers ───
+
+type adminError struct {
+	status int
+	msg    string
+}
+
+func (e *adminError) Error() string { return e.msg }
+
+func adminErr(status int, format string, args ...any) error {
+	return &adminError{status: status, msg: fmt.Sprintf(format, args...)}
+}
+
+func writeAdminError(w http.ResponseWriter, err error) {
+	var ae *adminError
+	if errors.As(err, &ae) {
+		http.Error(w, ae.msg, ae.status)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
+func writeAdminSuccess(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
+		"message": message,
+	}); err != nil {
+		slog.Debug("Failed to encode admin response", "error", err)
+	}
+}
+
+// mutateGroups serializes admin writes, applies the mutation to a private
+// copy, saves it to disk, and only then swaps the in-memory state. A failed
+// save leaves both disk and memory untouched.
+func (app *App) mutateGroups(fn func([]Group) ([]Group, error)) error {
+	app.adminMu.Lock()
+	defer app.adminMu.Unlock()
+	app.reloadMu.Lock()
+	defer app.reloadMu.Unlock()
+
+	app.State.mu.RLock()
+	groups := cloneGroups(app.State.groups)
+	app.State.mu.RUnlock()
+
+	updated, err := fn(groups)
+	if err != nil {
+		return err
+	}
+	if err := app.SaveGroups(updated); err != nil {
+		return adminErr(http.StatusInternalServerError, "Ошибка сохранения: %v", err)
+	}
+	app.SetGroups(updated)
+	return nil
+}
+
+func findGroupIndex(groups []Group, name string) (int, bool) {
+	for i, g := range groups {
+		if strings.EqualFold(g.Name, name) {
+			return i, true
 		}
+	}
+	return -1, false
+}
 
-		if !app.RequireAdminAuth.Load() {
-			next.ServeHTTP(w, r)
-			return
+func findServiceIndex(services []Service, name string) (int, bool) {
+	for i, s := range services {
+		if strings.EqualFold(s.Name, name) {
+			return i, true
 		}
+	}
+	return -1, false
+}
 
-		if app.AdminAPIKey == "" {
-			http.Error(w, "Панель администратора отключена. Установите переменную окружения ADMIN_API_KEY для включения.", http.StatusForbidden)
-			return
+// serviceNameTaken reports whether a service with the same name exists,
+// skipping the source service when updating or moving.
+func serviceNameTaken(groups []Group, name string, skipGroup, skipService int) bool {
+	for gi, g := range groups {
+		for si, s := range g.Services {
+			if gi == skipGroup && si == skipService {
+				continue
+			}
+			if strings.EqualFold(s.Name, name) {
+				return true
+			}
 		}
-
-		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="admin"`)
-			http.Error(w, "Требуется авторизация", http.StatusUnauthorized)
-			return
-		}
-
-		auth = strings.TrimPrefix(auth, "Bearer ")
-
-		if auth != app.AdminAPIKey {
-			http.Error(w, "Неверный API-ключ", http.StatusForbidden)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+	}
+	return false
 }
 
 // ─── Admin Page Handler ───
@@ -123,7 +204,7 @@ func (app *App) ServeAdmin(w http.ResponseWriter, r *http.Request) {
 
 // ─── Admin API: Groups ───
 
-func (app *App) apiAdminGroups(w http.ResponseWriter, r *http.Request) {
+func (app *App) apiAdminGroups(w http.ResponseWriter, _ *http.Request) {
 	groups := app.GetGroupsCopy()
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
@@ -143,40 +224,23 @@ func (app *App) apiAdminAddGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload.Name = strings.TrimSpace(payload.Name)
 	if err := validateName(payload.Name, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	app.State.mu.Lock()
-
-	for _, g := range app.State.groups {
-		if strings.EqualFold(g.Name, payload.Name) {
-			app.State.mu.Unlock()
-			http.Error(w, "Группа с таким именем уже существует", http.StatusBadRequest)
-			return
+	err := app.mutateGroups(func(groups []Group) ([]Group, error) {
+		if _, ok := findGroupIndex(groups, payload.Name); ok {
+			return nil, adminErr(http.StatusBadRequest, "Группа с таким именем уже существует")
 		}
-	}
-
-	app.State.groups = append(app.State.groups, Group{
-		Name:     payload.Name,
-		Services: []Service{},
+		return append(groups, Group{Name: payload.Name, Services: []Service{}}), nil
 	})
-	groupsCopy := app.cloneGroupsLocked()
-	app.State.mu.Unlock()
-
-	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
+	if err != nil {
+		writeAdminError(w, err)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "Группа добавлена",
-	}); err != nil {
-		slog.Debug("Failed to encode add group response", "error", err)
-	}
+	writeAdminSuccess(w, "Группа добавлена")
 }
 
 func (app *App) apiAdminDeleteGroup(w http.ResponseWriter, r *http.Request) {
@@ -189,45 +253,35 @@ func (app *App) apiAdminDeleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload.Name = strings.TrimSpace(payload.Name)
 	if err := validateName(payload.Name, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	app.State.mu.Lock()
-
-	found := false
-	newGroups := make([]Group, 0, len(app.State.groups))
-	for _, g := range app.State.groups {
-		if strings.EqualFold(g.Name, payload.Name) {
-			found = true
-			continue
+	err := app.mutateGroups(func(groups []Group) ([]Group, error) {
+		if len(groups) <= 1 {
+			return nil, adminErr(http.StatusBadRequest, "Нельзя удалить последнюю группу")
 		}
-		newGroups = append(newGroups, g)
-	}
-
-	if !found {
-		app.State.mu.Unlock()
-		http.Error(w, "Группа не найдена", http.StatusNotFound)
+		newGroups := make([]Group, 0, len(groups))
+		found := false
+		for _, g := range groups {
+			if strings.EqualFold(g.Name, payload.Name) {
+				found = true
+				continue
+			}
+			newGroups = append(newGroups, g)
+		}
+		if !found {
+			return nil, adminErr(http.StatusNotFound, "Группа не найдена")
+		}
+		return newGroups, nil
+	})
+	if err != nil {
+		writeAdminError(w, err)
 		return
 	}
-
-	app.State.groups = newGroups
-	groupsCopy := app.cloneGroupsLocked()
-	app.State.mu.Unlock()
-
-	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "Группа удалена",
-	}); err != nil {
-		slog.Debug("Failed to encode delete group response", "error", err)
-	}
+	writeAdminSuccess(w, "Группа удалена")
 }
 
 func (app *App) apiAdminRenameGroup(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +295,8 @@ func (app *App) apiAdminRenameGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload.OldName = strings.TrimSpace(payload.OldName)
+	payload.NewName = strings.TrimSpace(payload.NewName)
 	if err := validateName(payload.OldName, "Старое название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -250,46 +306,24 @@ func (app *App) apiAdminRenameGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.State.mu.Lock()
-
-	for _, g := range app.State.groups {
-		if strings.EqualFold(g.Name, payload.NewName) && !strings.EqualFold(g.Name, payload.OldName) {
-			app.State.mu.Unlock()
-			http.Error(w, "Группа с таким именем уже существует", http.StatusBadRequest)
-			return
+	err := app.mutateGroups(func(groups []Group) ([]Group, error) {
+		for _, g := range groups {
+			if strings.EqualFold(g.Name, payload.NewName) && !strings.EqualFold(g.Name, payload.OldName) {
+				return nil, adminErr(http.StatusBadRequest, "Группа с таким именем уже существует")
+			}
 		}
-	}
-
-	found := false
-	for i, g := range app.State.groups {
-		if strings.EqualFold(g.Name, payload.OldName) {
-			app.State.groups[i].Name = payload.NewName
-			found = true
-			break
+		idx, ok := findGroupIndex(groups, payload.OldName)
+		if !ok {
+			return nil, adminErr(http.StatusNotFound, "Группа не найдена")
 		}
-	}
-
-	if !found {
-		app.State.mu.Unlock()
-		http.Error(w, "Группа не найдена", http.StatusNotFound)
+		groups[idx].Name = payload.NewName
+		return groups, nil
+	})
+	if err != nil {
+		writeAdminError(w, err)
 		return
 	}
-
-	groupsCopy := app.cloneGroupsLocked()
-	app.State.mu.Unlock()
-
-	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "Группа переименована",
-	}); err != nil {
-		slog.Debug("Failed to encode rename group response", "error", err)
-	}
+	writeAdminSuccess(w, "Группа переименована")
 }
 
 // ─── Admin API: Services ───
@@ -305,60 +339,33 @@ func (app *App) apiAdminAddService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload.GroupName = strings.TrimSpace(payload.GroupName)
+	payload.Service = normalizeService(payload.Service)
 	if err := validateName(payload.GroupName, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateName(payload.Service.Name, "Название сервиса"); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(payload.Service.URL) == "" && strings.TrimSpace(payload.Service.IP) == "" {
-		http.Error(w, "Необходимо указать URL или IP", http.StatusBadRequest)
-		return
-	}
-	if err := validateURL(payload.Service.URL, "URL сервиса"); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := validateIP(payload.Service.IP, "IP-адрес сервиса"); err != nil {
+	if err := validateService(payload.Service); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	app.State.mu.Lock()
-
-	groupIdx, ok := app.findGroupIndexLocked(payload.GroupName)
-	if !ok {
-		app.State.mu.Unlock()
-		http.Error(w, "Группа не найдена", http.StatusNotFound)
-		return
-	}
-
-	for _, s := range app.State.groups[groupIdx].Services {
-		if strings.EqualFold(s.Name, payload.Service.Name) {
-			app.State.mu.Unlock()
-			http.Error(w, "Сервис с таким именем уже существует в группе", http.StatusBadRequest)
-			return
+	err := app.mutateGroups(func(groups []Group) ([]Group, error) {
+		groupIdx, ok := findGroupIndex(groups, payload.GroupName)
+		if !ok {
+			return nil, adminErr(http.StatusNotFound, "Группа не найдена")
 		}
-	}
-
-	app.State.groups[groupIdx].Services = append(app.State.groups[groupIdx].Services, payload.Service)
-	groupsCopy := app.cloneGroupsLocked()
-	app.State.mu.Unlock()
-
-	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
+		if serviceNameTaken(groups, payload.Service.Name, -1, -1) {
+			return nil, adminErr(http.StatusBadRequest, "Сервис с таким именем уже существует")
+		}
+		groups[groupIdx].Services = append(groups[groupIdx].Services, payload.Service)
+		return groups, nil
+	})
+	if err != nil {
+		writeAdminError(w, err)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "Сервис добавлен",
-	}); err != nil {
-		slog.Debug("Failed to encode add service response", "error", err)
-	}
+	writeAdminSuccess(w, "Сервис добавлен")
 }
 
 func (app *App) apiAdminUpdateService(w http.ResponseWriter, r *http.Request) {
@@ -373,6 +380,10 @@ func (app *App) apiAdminUpdateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload.GroupName = strings.TrimSpace(payload.GroupName)
+	payload.OldName = strings.TrimSpace(payload.OldName)
+	payload.NewService = normalizeService(payload.NewService)
+
 	if err := validateName(payload.GroupName, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -381,51 +392,35 @@ func (app *App) apiAdminUpdateService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateName(payload.NewService.Name, "Новое название сервиса"); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := validateURL(payload.NewService.URL, "URL сервиса"); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := validateIP(payload.NewService.IP, "IP-адрес сервиса"); err != nil {
+	if err := validateService(payload.NewService); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	app.State.mu.Lock()
-
-	groupIdx, ok := app.findGroupIndexLocked(payload.GroupName)
-	if !ok {
-		app.State.mu.Unlock()
-		http.Error(w, "Группа не найдена", http.StatusNotFound)
+	err := app.mutateGroups(func(groups []Group) ([]Group, error) {
+		groupIdx, ok := findGroupIndex(groups, payload.GroupName)
+		if !ok {
+			return nil, adminErr(http.StatusNotFound, "Группа не найдена")
+		}
+		serviceIdx, ok := findServiceIndex(groups[groupIdx].Services, payload.OldName)
+		if !ok {
+			return nil, adminErr(http.StatusNotFound, "Сервис не найден")
+		}
+		if serviceNameTaken(groups, payload.NewService.Name, groupIdx, serviceIdx) {
+			return nil, adminErr(http.StatusBadRequest, "Сервис с таким именем уже существует")
+		}
+		// Preserve the existing icon if the client did not send one.
+		if payload.NewService.Icon == "" {
+			payload.NewService.Icon = groups[groupIdx].Services[serviceIdx].Icon
+		}
+		groups[groupIdx].Services[serviceIdx] = payload.NewService
+		return groups, nil
+	})
+	if err != nil {
+		writeAdminError(w, err)
 		return
 	}
-
-	serviceIdx, ok := app.findServiceIndexLocked(app.State.groups[groupIdx].Services, payload.OldName)
-	if !ok {
-		app.State.mu.Unlock()
-		http.Error(w, "Сервис не найден", http.StatusNotFound)
-		return
-	}
-
-	app.State.groups[groupIdx].Services[serviceIdx] = payload.NewService
-	groupsCopy := app.cloneGroupsLocked()
-	app.State.mu.Unlock()
-
-	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "Сервис обновлён",
-	}); err != nil {
-		slog.Debug("Failed to encode update service response", "error", err)
-	}
+	writeAdminSuccess(w, "Сервис обновлён")
 }
 
 func (app *App) apiAdminDeleteService(w http.ResponseWriter, r *http.Request) {
@@ -439,6 +434,8 @@ func (app *App) apiAdminDeleteService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload.GroupName = strings.TrimSpace(payload.GroupName)
+	payload.ServiceName = strings.TrimSpace(payload.ServiceName)
 	if err := validateName(payload.GroupName, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -448,47 +445,32 @@ func (app *App) apiAdminDeleteService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.State.mu.Lock()
-
-	groupIdx, ok := app.findGroupIndexLocked(payload.GroupName)
-	if !ok {
-		app.State.mu.Unlock()
-		http.Error(w, "Группа не найдена", http.StatusNotFound)
-		return
-	}
-
-	found := false
-	newServices := make([]Service, 0, len(app.State.groups[groupIdx].Services))
-	for _, s := range app.State.groups[groupIdx].Services {
-		if strings.EqualFold(s.Name, payload.ServiceName) {
-			found = true
-			continue
+	err := app.mutateGroups(func(groups []Group) ([]Group, error) {
+		groupIdx, ok := findGroupIndex(groups, payload.GroupName)
+		if !ok {
+			return nil, adminErr(http.StatusNotFound, "Группа не найдена")
 		}
-		newServices = append(newServices, s)
-	}
 
-	if !found {
-		app.State.mu.Unlock()
-		http.Error(w, "Сервис не найден", http.StatusNotFound)
+		newServices := make([]Service, 0, len(groups[groupIdx].Services))
+		found := false
+		for _, s := range groups[groupIdx].Services {
+			if strings.EqualFold(s.Name, payload.ServiceName) {
+				found = true
+				continue
+			}
+			newServices = append(newServices, s)
+		}
+		if !found {
+			return nil, adminErr(http.StatusNotFound, "Сервис не найден")
+		}
+		groups[groupIdx].Services = newServices
+		return groups, nil
+	})
+	if err != nil {
+		writeAdminError(w, err)
 		return
 	}
-
-	app.State.groups[groupIdx].Services = newServices
-	groupsCopy := app.cloneGroupsLocked()
-	app.State.mu.Unlock()
-
-	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "Сервис удалён",
-	}); err != nil {
-		slog.Debug("Failed to encode delete service response", "error", err)
-	}
+	writeAdminSuccess(w, "Сервис удалён")
 }
 
 // apiAdminMoveService — POST /api/admin/service/move
@@ -504,6 +486,9 @@ func (app *App) apiAdminMoveService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload.FromGroup = strings.TrimSpace(payload.FromGroup)
+	payload.ToGroup = strings.TrimSpace(payload.ToGroup)
+	payload.Service = strings.TrimSpace(payload.Service)
 	if err := validateName(payload.FromGroup, "Исходная группа"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -517,51 +502,40 @@ func (app *App) apiAdminMoveService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.State.mu.Lock()
+	err := app.mutateGroups(func(groups []Group) ([]Group, error) {
+		fromIdx, ok := findGroupIndex(groups, payload.FromGroup)
+		if !ok {
+			return nil, adminErr(http.StatusNotFound, "Исходная группа не найдена")
+		}
+		toIdx, ok := findGroupIndex(groups, payload.ToGroup)
+		if !ok {
+			return nil, adminErr(http.StatusNotFound, "Целевая группа не найдена")
+		}
+		if fromIdx == toIdx {
+			return nil, adminErr(http.StatusBadRequest, "Исходная и целевая группы совпадают")
+		}
 
-	fromIdx, ok := app.findGroupIndexLocked(payload.FromGroup)
-	if !ok {
-		app.State.mu.Unlock()
-		http.Error(w, "Исходная группа не найдена", http.StatusNotFound)
+		serviceIdx, ok := findServiceIndex(groups[fromIdx].Services, payload.Service)
+		if !ok {
+			return nil, adminErr(http.StatusNotFound, "Сервис не найден")
+		}
+		if serviceNameTaken(groups, payload.Service, fromIdx, serviceIdx) {
+			return nil, adminErr(http.StatusBadRequest, "Сервис с таким именем уже существует в целевой группе")
+		}
+
+		svc := groups[fromIdx].Services[serviceIdx]
+		groups[fromIdx].Services = append(
+			groups[fromIdx].Services[:serviceIdx],
+			groups[fromIdx].Services[serviceIdx+1:]...,
+		)
+		groups[toIdx].Services = append(groups[toIdx].Services, svc)
+		return groups, nil
+	})
+	if err != nil {
+		writeAdminError(w, err)
 		return
 	}
-
-	toIdx, ok := app.findGroupIndexLocked(payload.ToGroup)
-	if !ok {
-		app.State.mu.Unlock()
-		http.Error(w, "Целевая группа не найдена", http.StatusNotFound)
-		return
-	}
-
-	serviceIdx, ok := app.findServiceIndexLocked(app.State.groups[fromIdx].Services, payload.Service)
-	if !ok {
-		app.State.mu.Unlock()
-		http.Error(w, "Сервис не найден", http.StatusNotFound)
-		return
-	}
-
-	svc := app.State.groups[fromIdx].Services[serviceIdx]
-	app.State.groups[fromIdx].Services = append(
-		app.State.groups[fromIdx].Services[:serviceIdx],
-		app.State.groups[fromIdx].Services[serviceIdx+1:]...,
-	)
-	app.State.groups[toIdx].Services = append(app.State.groups[toIdx].Services, svc)
-
-	groupsCopy := app.cloneGroupsLocked()
-	app.State.mu.Unlock()
-
-	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "Сервис перемещён",
-	}); err != nil {
-		slog.Debug("Failed to encode move service response", "error", err)
-	}
+	writeAdminSuccess(w, "Сервис перемещён")
 }
 
 // apiAdminReorderServices — POST /api/admin/service/reorder
@@ -576,6 +550,7 @@ func (app *App) apiAdminReorderServices(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	payload.GroupName = strings.TrimSpace(payload.GroupName)
 	if err := validateName(payload.GroupName, "Название группы"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -584,90 +559,51 @@ func (app *App) apiAdminReorderServices(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Список сервисов пуст", http.StatusBadRequest)
 		return
 	}
-	for _, svcName := range payload.Services {
-		if err := validateName(svcName, "Название сервиса"); err != nil {
+	for i := range payload.Services {
+		payload.Services[i] = strings.TrimSpace(payload.Services[i])
+		if err := validateName(payload.Services[i], "Название сервиса"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
 
-	app.State.mu.Lock()
-
-	groupIdx, ok := app.findGroupIndexLocked(payload.GroupName)
-	if !ok {
-		app.State.mu.Unlock()
-		http.Error(w, "Группа не найдена", http.StatusNotFound)
-		return
-	}
-
-	if len(payload.Services) != len(app.State.groups[groupIdx].Services) {
-		app.State.mu.Unlock()
-		http.Error(w, "Количество сервисов не совпадает", http.StatusBadRequest)
-		return
-	}
-
-	svcMap := make(map[string]Service, len(app.State.groups[groupIdx].Services))
-	for _, s := range app.State.groups[groupIdx].Services {
-		svcMap[strings.ToLower(s.Name)] = s
-	}
-
-	newServices := make([]Service, 0, len(payload.Services))
-	for _, name := range payload.Services {
-		svc, ok := svcMap[strings.ToLower(name)]
+	err := app.mutateGroups(func(groups []Group) ([]Group, error) {
+		groupIdx, ok := findGroupIndex(groups, payload.GroupName)
 		if !ok {
-			app.State.mu.Unlock()
-			http.Error(w, fmt.Sprintf("Сервис %q не найден", name), http.StatusBadRequest)
-			return
+			return nil, adminErr(http.StatusNotFound, "Группа не найдена")
 		}
-		newServices = append(newServices, svc)
-	}
 
-	app.State.groups[groupIdx].Services = newServices
-	groupsCopy := app.cloneGroupsLocked()
-	app.State.mu.Unlock()
+		current := groups[groupIdx].Services
+		if len(payload.Services) != len(current) {
+			return nil, adminErr(http.StatusBadRequest, "Количество сервисов не совпадает")
+		}
 
-	if err := app.SaveGroups(groupsCopy); err != nil {
-		http.Error(w, fmt.Sprintf("Ошибка сохранения: %v", err), http.StatusInternalServerError)
+		byName := make(map[string]Service, len(current))
+		for _, s := range current {
+			byName[strings.ToLower(s.Name)] = s
+		}
+
+		newServices := make([]Service, 0, len(payload.Services))
+		seen := make(map[string]bool, len(payload.Services))
+		for _, name := range payload.Services {
+			key := strings.ToLower(name)
+			if seen[key] {
+				return nil, adminErr(http.StatusBadRequest, "Список сервисов содержит дубликаты: %q", name)
+			}
+			seen[key] = true
+			svc, ok := byName[key]
+			if !ok {
+				return nil, adminErr(http.StatusBadRequest, "Сервис %q не найден", name)
+			}
+			newServices = append(newServices, svc)
+		}
+
+		groups[groupIdx].Services = newServices
+		return groups, nil
+	})
+	if err != nil {
+		writeAdminError(w, err)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "Порядок сервисов обновлён",
-	}); err != nil {
-		slog.Debug("Failed to encode reorder service response", "error", err)
-	}
-}
-
-// ─── Locked helpers (used only by admin handlers) ───
-
-func (app *App) cloneGroupsLocked() []Group {
-	groupsCopy := make([]Group, len(app.State.groups))
-	for i, g := range app.State.groups {
-		groupsCopy[i] = Group{
-			Name:     g.Name,
-			Services: make([]Service, len(g.Services)),
-		}
-		copy(groupsCopy[i].Services, g.Services)
-	}
-	return groupsCopy
-}
-
-func (app *App) findGroupIndexLocked(name string) (int, bool) {
-	for i, g := range app.State.groups {
-		if strings.EqualFold(g.Name, name) {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-func (app *App) findServiceIndexLocked(services []Service, name string) (int, bool) {
-	for i, s := range services {
-		if strings.EqualFold(s.Name, name) {
-			return i, true
-		}
-	}
-	return -1, false
+	writeAdminSuccess(w, "Порядок сервисов обновлён")
 }

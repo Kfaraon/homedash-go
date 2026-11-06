@@ -114,16 +114,6 @@ func (cbm *CircuitBreakerManager) RecordCheck(name string, success bool) {
 	}
 }
 
-// GetCircuitState returns the current circuit breaker state for a service
-func (cbm *CircuitBreakerManager) GetCircuitState(name string) CircuitStateEnum {
-	cbm.mu.RLock()
-	defer cbm.mu.RUnlock()
-	if cb, exists := cbm.states[name]; exists {
-		return cb.State
-	}
-	return CircuitClosed
-}
-
 // Reset clears all circuit breaker states
 func (cbm *CircuitBreakerManager) Reset() {
 	cbm.mu.Lock()
@@ -134,7 +124,7 @@ func (cbm *CircuitBreakerManager) Reset() {
 // --- Service check functions ---
 
 // checkService checks a single service
-func checkService(ctx context.Context, s Service, pingTimeout time.Duration) Status {
+func checkService(ctx context.Context, s Service, checkTimeout, pingTimeout time.Duration) Status {
 	var httpOk, pingOk *bool
 	var wg sync.WaitGroup
 	var httpRes, pingRes bool
@@ -143,7 +133,9 @@ func checkService(ctx context.Context, s Service, pingTimeout time.Duration) Sta
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			httpRes = checkHTTP(ctx, s.URL, s.VerifySSL)
+			httpCtx, cancel := context.WithTimeout(ctx, checkTimeout)
+			defer cancel()
+			httpRes = checkHTTP(httpCtx, s.URL, s.VerifySSL)
 		}()
 	}
 
@@ -185,6 +177,7 @@ func checkHTTP(ctx context.Context, u string, verifySSL bool) bool {
 		slog.Debug("HTTP request failed", "url", u, "verify_ssl", verifySSL, "error", err)
 		return false
 	}
+	req.Header.Set("User-Agent", "homedash-go/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -272,7 +265,7 @@ func executePing(ctx context.Context, ip string, pingTimeout time.Duration) bool
 
 // --- Worker pool for parallel checks ---
 
-func checkServicesInParallel(ctx context.Context, groups []Group, cb *CircuitBreakerManager, pingTimeout time.Duration, maxWorkers int, isInitialPoll bool) map[string]Status {
+func checkServicesInParallel(ctx context.Context, groups []Group, cb *CircuitBreakerManager, checkTimeout, pingTimeout time.Duration, maxWorkers int, isInitialPoll bool) map[string]Status {
 	type serviceTask struct {
 		Svc         Service
 		PingTimeout time.Duration
@@ -313,7 +306,7 @@ func checkServicesInParallel(ctx context.Context, groups []Group, cb *CircuitBre
 		go func() {
 			defer wg.Done()
 			for task := range taskCh {
-				st := checkService(ctx, task.Svc, task.PingTimeout)
+				st := checkService(ctx, task.Svc, checkTimeout, task.PingTimeout)
 				cb.RecordCheck(task.Svc.Name, st.Available)
 				resultCh <- struct {
 					name   string
@@ -393,8 +386,14 @@ func initHTTPTransports() {
 	})
 }
 
-func getHTTPTransport() *http.Transport {
-	return transportSecure
+// closeHTTPTransports closes idle connections on both transports.
+func closeHTTPTransports() {
+	if transportSecure != nil {
+		transportSecure.CloseIdleConnections()
+	}
+	if transportInsecure != nil {
+		transportInsecure.CloseIdleConnections()
+	}
 }
 
 func getHTTPClient(verifySSL bool) *http.Client {

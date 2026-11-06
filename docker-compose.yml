@@ -2,7 +2,9 @@ services:
   homedash:
     build: .
     container_name: homedash
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "${HOMEDASH_PORT:-5000}:5000"
     volumes:

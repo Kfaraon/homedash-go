@@ -79,18 +79,15 @@ jobs:
             "groups": [
               {
                 "name": "Test Group",
-                "services": []
+                "services": [
+                  {"name": "Local", "url": "http://127.0.0.1:1", "verify_ssl": false}
+                ]
               }
             ]
           }
           EOF
-          
-          if go test ./... -list . 2>/dev/null | grep -q .; then
-            echo "🧪 Тесты найдены, запускаем..."
-            go test -v -race ./...
-          else
-            echo "⚠️ Тесты не найдены, пропускаем"
-          fi
+
+          go test -race -v ./...
 
       - name: ✅ Проверка сборки
         run: |

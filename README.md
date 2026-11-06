@@ -1,6 +1,6 @@
 # Homedash
 
-[![Go Version](https://img.shields.io/badge/Go-1.23-blue.svg)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.26-blue.svg)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Homedash** — легковесная панель мониторинга домашних сервисов с автоматическим обнаружением статуса, интеллектуальным кэшированием и энергосберегающим режимом.
@@ -79,7 +79,7 @@ go run .
 
 ### Требования
 
-- Go 1.23 или выше
+- Go 1.26 или выше
 - Linux / macOS / Windows
 
 ### Сборка бинарного файла
@@ -106,14 +106,14 @@ go build -o homedash.exe
 |------------|--------------|----------|
 | `PORT` | `5000` | Порт HTTP сервера |
 | `CONFIG_FILE` | `config.json` | Путь к файлу конфигурации |
+| `ICONS_CONFIG_PATH` | `data/icons.json` | Путь к каталогу иконок |
 | `CHECK_TIMEOUT` | `2s` | Таймаут HTTP проверки |
 | `PING_TIMEOUT` | `1s` | Таймаут ICMP ping проверки |
 | `MAX_WORKERS` | `20` | Максимальное количество параллельных проверок |
-| `ADMIN_API_KEY` | `""` | API ключ для защиты админ-панели |
 | `ALLOWED_ORIGINS` | `""` | Разрешённые CORS origin (через запятую) |
 | `IDLE_TIMEOUT` | `5m` | Время бездействия перед переходом в спящий режим |
 | `LAZY_CHECK_INTERVAL` | `30s` | Интервал проверки в активном режиме |
-| `IP_PROVIDERS` | `https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip` | Сервисы для определения внешнего IP |
+| `IP_PROVIDERS` | `https://checkip.amazonaws.com,https://ifconfig.me/ip,https://ipinfo.io/ip,https://wtfismyip.com/text` | Сервисы для определения внешнего IP |
 | `IP_CACHE_TTL` | `10m` | Время жизни кэша внешнего IP |
 
 ### Структура config.json
@@ -129,24 +129,47 @@ go build -o homedash.exe
           "url": "https://example.com",
           "ip": "192.168.1.1",
           "icon": "service-icon",
-          "verify_ssl": true
+          "verify_ssl": false
         }
       ]
     }
-  ],
-  "admin": {
-    "require_api_key": true
-  }
+  ]
 }
 ```
 
 **Поля сервиса:**
 
-- `name` (обязательно) — название сервиса
+- `name` (обязательно) — название сервиса; должно быть **уникальным** среди всех групп
 - `url` (опционально) — HTTP/HTTPS URL для проверки
 - `ip` (опционально) — IP адрес для ping проверки
 - `icon` (опционально) — имя иконки (автоматическое определение по названию)
-- `verify_ssl` (опционально, по умолчанию `true`) — проверять SSL сертификат
+- `verify_ssl` (опционально, по умолчанию `false`) — проверять SSL сертификат
+
+Названия групп и сервисов должны быть уникальны: они используются как ключи статусов.
+Некорректный конфиг (или переменные окружения) приводит к отказу запуска — сервис
+не стартует «наполовину», а завершается с ошибкой.
+
+### Каталог иконок (`data/icons.json`)
+
+Иконки сервисов определяются по названию из каталога `data/icons.json`
+(путь переопределяется через `ICONS_CONFIG_PATH`). Каталог содержит ~215 популярных
+сервисов, алиасы и категории-заглушки.
+
+Если сервиса нет в каталоге и не задано поле `icon`, homedash **подберёт иконку
+из [Iconify](https://iconify.design)** по имени сервиса: браузер последовательно
+пробует коллекции `selfhst` → `simple-icons` → `logos`, а при неудаче показывает
+заглушку категории/`mdi:server`. Сетевых запросов на сервере при этом не
+выполняется — только `<img onerror>`. Поведение настраивается в блоке `defaults`:
+
+```json
+"defaults": {
+  "lookup_enabled": true,
+  "lookup_collections": ["selfhst", "simple-icons", "logos"]
+}
+```
+
+- `lookup_enabled` (`false` отключает автоподбор) — по умолчанию `true`
+- `lookup_collections` — порядок коллекций Iconify для подбора
 
 ## 🖥️ Использование
 
@@ -155,6 +178,10 @@ go build -o homedash.exe
 - 🟢 **Зелёный** — сервис доступен
 - 🔴 **Красный** — сервис недоступен
 - ⚪ **Серый** — сервис в режиме ожидания
+
+В футере показывается внешний (WAN) IP. Рядом — индикатор: **зелёная мигающая
+точка** означает, что WAN-адрес получен и Интернет доступен; серая — что WAN
+определить не удалось (провайдеры недоступны или вернули не публичный адрес).
 
 ### Админ-панель
 
@@ -166,19 +193,10 @@ go build -o homedash.exe
 - 🔄 Drag-and-drop сортировка
 - 🎨 Визуальный редактор иконок
 
-**Защита админ-панели:**
-
-Установите переменную окружения `ADMIN_API_KEY` для включения авторизации:
-
-```bash
-export ADMIN_API_KEY=your-secret-key
-```
-
-Затем добавляйте заголовок к запросам:
-
-```
-Authorization: Bearer your-secret-key
-```
+**⚠️ Админ-панель не имеет авторизации.** Любой, кто может достучаться до порта
+приложения, может менять конфигурацию. Ограничивайте доступ к `/admin` и
+`/api/admin/*` на уровне сети или обратного прокси (например, basic auth, VPN,
+allow-list по IP). Дополнительно отклоняются cross-origin запросы к админке.
 
 ## 🔌 API
 
@@ -210,6 +228,20 @@ GET /api/status
 GET /api/myip
 ```
 
+Возвращает `text/plain` с публичным (WAN) IP. Провайдеры опрашиваются по порядку
+(см. `IP_PROVIDERS`), результат кэшируется на `IP_CACHE_TTL`. Ответ содержит
+заголовки `X-IP-Source` (`cache`/`fresh`) и `X-IP-Provider`. Непубличные адреса
+(приватные RFC1918, CGNAT `100.64/10`, loopback, link-local, ULA и т.п.) от
+провайдеров игнорируются — если все вернут мусор, endpoint отдаёт `502`.
+Ответ `502` также означает, что Интернет/WAN недоступен (в UI точка рядом с
+адресом остаётся серой).
+
+> **Внимание:** если часть трафика уходит через VPN (policy-based routing),
+> выбирайте провайдеров, чьи адреса **не** попадают в VPN-маршруты. Сервисы за
+> Cloudflare (`api.ipify.org`, `icanhazip.com`, `ifconfig.co`, `ip.sb` и т.п.)
+> часто ходят через VPN и показывают адрес VPN вместо реального WAN. Дефолтный
+> список сознательно собран из AWS/Google/Hetzner, которые идут напрямую.
+
 #### Health check
 
 ```bash
@@ -221,11 +253,20 @@ GET /health
 ```json
 {
   "status": "ok",
+  "config_ok": true,
+  "cache_entries": 12,
+  "groups_count": 3,
   "timestamp": "2024-01-01T12:00:00Z"
 }
 ```
 
-### Admin API (требует авторизации)
+Если конфигурацию не удалось загрузить, возвращается `503` со `status: "degraded"` —
+удобно для healthcheck в оркестраторах.
+
+### Admin API (без авторизации)
+
+> Доступ к этим endpoint'ам намеренно не защищён токеном. Ограничивайте его на
+> уровне сети/прокси. Cross-origin запросы отклоняются.
 
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
@@ -243,7 +284,6 @@ GET /health
 
 ```bash
 curl -X POST http://localhost:5000/api/admin/service \
-  -H "Authorization: Bearer your-secret-key" \
   -H "Content-Type: application/json" \
   -d '{
     "group_name": "Медиа сервисы",
@@ -257,62 +297,54 @@ curl -X POST http://localhost:5000/api/admin/service \
 
 ## 🐳 Docker
 
-### Создание Dockerfile
+### Dockerfile
 
-```dockerfile
-FROM golang:1.23-alpine AS builder
-
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o homedash .
-
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates iputils
-
-WORKDIR /root/
-COPY --from=builder /app/homedash .
-COPY --from=builder /app/templates ./templates
-COPY --from=builder /app/static ./static
-
-EXPOSE 5000
-CMD ["./homedash"]
-```
-
-### Сборка и запуск
+В репозитории уже есть многоступенчатый `dockerfile` (multi-arch, непривилегированный
+пользователь, встроенный healthcheck). Сборка и запуск:
 
 ```bash
 docker build -t homedash .
+
 docker run -d \
   -p 5000:5000 \
-  -v $(pwd)/config.json:/root/config.json \
-  -e ADMIN_API_KEY=your-secret-key \
+  -v $(pwd)/data:/app/data \
   --name homedash \
   homedash
 ```
+
+Образ использует `CONFIG_FILE=/app/data/config.json` и
+`ICONS_CONFIG_PATH=/app/data/icons.json`, поэтому достаточно смонтировать каталог `data`.
+
+### docker compose
+
+```bash
+docker compose up -d
+```
+
+`docker-compose.yml` монтирует `data/` и читает переменные из `.env`
+(необязательно — `env_file` помечен `required: false`).
 
 ## 📁 Структура проекта
 
 ```
 homedash-go/
-├── main.go              # Точка входа
-├── app.go               # Инициализация приложения
+├── main.go              # Точка входа, валидация env
+├── app.go               # Инициализация приложения, роутер, watcher
 ├── checks.go            # Логика проверок сервисов
+├── handlers.go          # HTTP-обработчики (страница, статус, health, IP)
 ├── types.go             # Структуры данных
 ├── admin.go             # Обработчики админ-панели
-├── config.go            # Загрузка и валидация конфигурации
+├── config.go            # Загрузка, валидация и атомарное сохранение
 ├── icons.go             # Определение иконок
-├── ip.go                # Определение внешнего IP
 ├── templates/
 │   ├── home.html        # Шаблон главной страницы
 │   └── admin.html       # Шаблон админ-панели
 ├── static/
 │   ├── home.css         # Стили главной страницы
-│   ├── admin.css        # Стили админ-панели
-│   └── icons/           # SVG иконки
-├── config.json          # Конфигурационный файл
+│   └── admin.css        # Стили админ-панели
+├── data/
+│   ├── config.json      # Конфигурационный файл (пример)
+│   └── icons.json       # Каталог иконок
 ├── go.mod               # Зависимости Go
 └── README.md            # Документация
 ```
@@ -373,7 +405,9 @@ homedash-go/
 
 ### Почему админ-панель не открывается?
 
-Если установлен `ADMIN_API_KEY`, добавьте заголовок авторизации или уберите ключ для отключения защиты.
+Админка работает без авторизации. Если она недоступна — проверьте, что запрос
+не блокируется обратным прокси или allow-list по IP. Cross-origin запросы
+(`Origin`, не совпадающий с хостом) отклоняются с `403`.
 
 ## 🤝 Вклад в развитие
 
@@ -389,7 +423,7 @@ go mod download
 go run .
 
 # Тесты
-go test ./...
+go test -race ./...
 ```
 
 ## 📄 Лицензия

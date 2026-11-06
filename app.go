@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,14 +22,12 @@ import (
 // App holds all application dependencies
 type App struct {
 	// Config
-	ConfigFile       string
-	CacheTTL         time.Duration
-	ServerPort       string
-	CheckTimeout     time.Duration
-	PingTimeout      time.Duration
-	AdminAPIKey      string
-	RequireAdminAuth atomic.Bool
-	AllowedOrigins   string
+	ConfigFile     string
+	CacheTTL       time.Duration
+	ServerPort     string
+	CheckTimeout   time.Duration
+	PingTimeout    time.Duration
+	AllowedOrigins string
 	// IP settings
 	IPProviders []string
 	IPCacheTTL  time.Duration
@@ -35,7 +35,8 @@ type App struct {
 	IPCacheMu   sync.RWMutex
 
 	// Performance settings
-	MaxWorkers int
+	MaxWorkers   int
+	LazyInterval time.Duration
 
 	// State
 	State *AppState
@@ -51,12 +52,12 @@ type App struct {
 	Watcher *fsnotify.Watcher
 	Done    chan struct{}
 
-	// Reload mutex
-	reloadMu sync.Mutex
+	// Mutexes
+	reloadMu sync.Mutex // serializes config reloads
+	adminMu  sync.Mutex // serializes admin writes (read-modify-save-swap)
 
 	// Lazy evaluation
 	lastAccess   atomic.Int64
-	checkActive  atomic.Bool
 	isRefreshing atomic.Bool
 	idleTimeout  time.Duration
 
@@ -75,38 +76,70 @@ type AppState struct {
 
 // NewApp creates a fully initialized App
 func NewApp() (*App, error) {
-	adminAPIKey := getEnv("ADMIN_API_KEY", "")
+	port := getEnv("PORT", "5000")
+	if err := validatePort(port); err != nil {
+		return nil, err
+	}
+
+	checkTimeout, err := getPositiveDurationEnv("CHECK_TIMEOUT", 2*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	pingTimeout, err := getPositiveDurationEnv("PING_TIMEOUT", 1*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	idleTimeout, err := getPositiveDurationEnv("IDLE_TIMEOUT", 5*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	lazyInterval, err := getPositiveDurationEnv("LAZY_CHECK_INTERVAL", 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	ipCacheTTL, err := getPositiveDurationEnv("IP_CACHE_TTL", 10*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	maxWorkers, err := getPositiveIntEnv("MAX_WORKERS", 20)
+	if err != nil {
+		return nil, err
+	}
+
 	app := &App{
 		ConfigFile:     getEnv("CONFIG_FILE", "config.json"),
 		CacheTTL:       15 * time.Second,
-		ServerPort:     getEnv("PORT", "5000"),
-		CheckTimeout:   getDurationEnv("CHECK_TIMEOUT", 2*time.Second),
-		PingTimeout:    getDurationEnv("PING_TIMEOUT", 1*time.Second),
-		AdminAPIKey:    adminAPIKey,
+		ServerPort:     port,
+		CheckTimeout:   checkTimeout,
+		PingTimeout:    pingTimeout,
 		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
-		MaxWorkers:     getIntEnv("MAX_WORKERS", 20),
+		MaxWorkers:     maxWorkers,
+		LazyInterval:   lazyInterval,
 		State: &AppState{
 			cache: make(map[string]Status),
 			stale: make(map[string]Status),
 		},
 		circuitBreaker: NewCircuitBreakerManager(),
-		idleTimeout:    getDurationEnv("IDLE_TIMEOUT", 5*time.Minute),
+		idleTimeout:    idleTimeout,
 		Done:           make(chan struct{}),
 	}
 	app.lastAccess.Store(time.Now().Unix())
-	app.checkActive.Store(false)
 	app.isRefreshing.Store(false)
-	app.RequireAdminAuth.Store(adminAPIKey != "")
 
 	app.iconResolver = NewIconResolver()
 
-	// IP providers config
-	providersEnv := getEnv("IP_PROVIDERS", "https://api.ipify.org,https://icanhazip.com,https://ifconfig.co/ip")
-	app.IPProviders = strings.Split(providersEnv, ",")
-	for i := range app.IPProviders {
-		app.IPProviders[i] = strings.TrimSpace(app.IPProviders[i])
+	// IP providers config. По умолчанию используются сервисы вне популярных
+	// VPN-маршрутов (AWS/Google/Hetzner), а не Cloudflare: если часть трафика
+	// уходит через VPN по address-list, Cloudflare-провайдеры покажут адрес
+	// VPN, а не реальный WAN провайдера.
+	providersEnv := getEnv("IP_PROVIDERS", "https://checkip.amazonaws.com,https://ifconfig.me/ip,https://ipinfo.io/ip,https://wtfismyip.com/text")
+	app.IPProviders = make([]string, 0, 4)
+	for _, p := range strings.Split(providersEnv, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			app.IPProviders = append(app.IPProviders, p)
+		}
 	}
-	app.IPCacheTTL = getDurationEnv("IP_CACHE_TTL", 10*time.Minute)
+	app.IPCacheTTL = ipCacheTTL
 	app.IPCache = &IPCache{}
 
 	// Load and validate config
@@ -114,17 +147,10 @@ func NewApp() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	g := cfg.groups
-	app.SetGroups(g)
-
-	if err := app.ValidateGroups(g); err != nil {
-		slog.Warn("Validation warning", "error", err)
+	if err := app.ValidateGroups(cfg.groups); err != nil {
+		return nil, fmt.Errorf("некорректная конфигурация %s: %w", app.ConfigFile, err)
 	}
-
-	// Set admin auth from config
-	if cfg.admin != nil {
-		app.RequireAdminAuth.Store(adminAPIKey != "" && cfg.admin.RequireAPIKey)
-	}
+	app.SetGroups(cfg.groups)
 
 	// Initialize HTTP transports
 	initHTTPTransports()
@@ -150,10 +176,14 @@ func (a *App) markAccess() {
 // initTemplates initializes HTML templates
 func (app *App) initTemplates() error {
 	homeFuncs := template.FuncMap{
-		"resolveIcon":      app.ResolveIcon,
-		"resolveColor":     app.ResolveColor,
-		"resolveIconColor": app.ResolveIconColor,
-		"resolveIconCDN":   app.ResolveIconCDN,
+		"resolveIcon":    app.ResolveIcon,
+		"resolveColor":   app.ResolveColor,
+		"resolveIconCDN": app.ResolveIconCDN,
+		// iconCandidates возвращает основной URL иконки и запасные из iconify
+		// (если сервис не найден в icons.json).
+		"iconCandidates": func(name, explicit string) []string {
+			return app.iconResolver.IconCandidates(name, explicit)
+		},
 	}
 	homeTmpl, err := template.New("home.html").Funcs(homeFuncs).ParseFiles("templates/home.html")
 	if err != nil {
@@ -196,15 +226,7 @@ func (app *App) SaveGroups(groups []Group) error {
 func (app *App) GetGroups() []Group {
 	app.State.mu.RLock()
 	defer app.State.mu.RUnlock()
-	result := make([]Group, len(app.State.groups))
-	for i, g := range app.State.groups {
-		result[i] = Group{
-			Name:     g.Name,
-			Services: make([]Service, len(g.Services)),
-		}
-		copy(result[i].Services, g.Services)
-	}
-	return result
+	return cloneGroups(app.State.groups)
 }
 
 // GetGroupsCopy returns a safe copy of groups for rendering
@@ -212,20 +234,15 @@ func (app *App) GetGroupsCopy() []Group {
 	return app.GetGroups()
 }
 
-// SetGroups atomically updates groups and clears cache
+// SetGroups atomically updates groups and clears all caches.
 func (app *App) SetGroups(groups []Group) {
 	app.State.mu.Lock()
 	defer app.State.mu.Unlock()
 	app.State.groups = groups
 	app.State.cache = make(map[string]Status)
 	app.State.cacheTS = time.Time{}
-}
-
-// SetGroupsNoCacheClear atomically updates groups without clearing cache
-func (app *App) SetGroupsNoCacheClear(groups []Group) {
-	app.State.mu.Lock()
-	defer app.State.mu.Unlock()
-	app.State.groups = groups
+	app.State.stale = make(map[string]Status)
+	app.State.staleTS = time.Time{}
 }
 
 // GetGroupsCount returns number of groups (thread-safe)
@@ -247,7 +264,7 @@ func (app *App) GetCache() map[string]Status {
 	app.State.mu.RLock()
 	defer app.State.mu.RUnlock()
 	if time.Since(app.State.cacheTS) < app.CacheTTL && len(app.State.cache) > 0 {
-		return app.State.cache // Возвращаем ссылку, она read-only
+		return app.State.cache // read-only
 	}
 	return nil
 }
@@ -257,21 +274,42 @@ func (app *App) GetStaleCache() (map[string]Status, bool) {
 	app.State.mu.RLock()
 	defer app.State.mu.RUnlock()
 	if len(app.State.stale) > 0 && time.Since(app.State.staleTS) < 5*app.CacheTTL {
-		return app.State.stale, true // Возвращаем ссылку
+		return app.State.stale, true // read-only
 	}
 	return nil, false
 }
 
+// mergeStatuses overlays freshly checked statuses over the previous cache.
+// Services skipped by the circuit breaker keep their last known status instead
+// of disappearing from the API response.
+func (app *App) mergeStatuses(checked map[string]Status) map[string]Status {
+	app.State.mu.RLock()
+	base := app.State.cache
+	if len(base) == 0 {
+		base = app.State.stale
+	}
+	merged := make(map[string]Status, len(base)+len(checked))
+	for k, v := range base {
+		merged[k] = v
+	}
+	app.State.mu.RUnlock()
+
+	for k, v := range checked {
+		merged[k] = v
+	}
+	return merged
+}
+
 // SetCache atomically updates cache with stale copy
 func (app *App) SetCache(cache map[string]Status) {
-	// 1. Готовим stale-копию ВНЕ лока, чтобы не блокировать UI
+	// 1. Prepare stale copy outside the lock to avoid blocking the UI.
 	staleCopy := make(map[string]Status, len(cache))
 	for k, v := range cache {
 		staleCopy[k] = v
 	}
 	now := time.Now()
 
-	// 2. Мгновенная замена ссылок под локом
+	// 2. Swap references under the lock.
 	app.State.mu.Lock()
 	app.State.cache = cache
 	app.State.cacheTS = now
@@ -309,7 +347,7 @@ func (app *App) Run() error {
 	slog.Info("Shutdown signal received, shutting down...")
 
 	close(app.Done)
-	getHTTPTransport().CloseIdleConnections()
+	closeHTTPTransports()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -326,14 +364,12 @@ func (app *App) startLazyCheckLoop() {
 	// 1. Мгновенный первичный опрос в фоне
 	go app.refreshCacheIfNeeded()
 
-	interval := getDurationEnv("LAZY_CHECK_INTERVAL", 30*time.Second)
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(app.LazyInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-app.Done:
-			app.checkActive.Store(false)
 			return
 		case <-ticker.C:
 			if !app.isActive() {
@@ -357,7 +393,8 @@ func (app *App) refreshCacheIfNeeded() {
 	default:
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	timeout := app.CheckTimeout + app.PingTimeout + 5*time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -371,11 +408,10 @@ func (app *App) refreshCacheIfNeeded() {
 
 	groups := app.GetGroupsCopy()
 
-	// ИСПРАВЛЕНИЕ: Определяем, является ли это первичным опросом (пустой кэш)
+	// Determine whether this is the initial poll (empty cache).
 	isInitialPoll := app.GetCacheCount() == 0
 
-	// Передаем флаг isInitialPoll последним аргументом
-	sm := checkServicesInParallel(ctx, groups, app.circuitBreaker, app.PingTimeout, app.MaxWorkers, isInitialPoll)
+	sm := checkServicesInParallel(ctx, groups, app.circuitBreaker, app.CheckTimeout, app.PingTimeout, app.MaxWorkers, isInitialPoll)
 
 	close(done)
 
@@ -383,7 +419,7 @@ func (app *App) refreshCacheIfNeeded() {
 	case <-app.Done:
 		return
 	default:
-		app.SetCache(sm)
+		app.SetCache(app.mergeStatuses(sm))
 	}
 }
 
@@ -403,7 +439,7 @@ func (app *App) buildRouter() http.Handler {
 	staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir("static")))
 	mux.Handle("/static/", staticHandler)
 
-	mux.Handle("/", app.trackAccessMiddleware(http.HandlerFunc(app.ServeHome)))
+	mux.Handle("/{$}", app.trackAccessMiddleware(http.HandlerFunc(app.ServeHome)))
 	mux.Handle("/api/status", app.trackAccessMiddleware(http.HandlerFunc(app.ServeStatus)))
 	mux.Handle("/health", app.trackAccessMiddleware(http.HandlerFunc(app.ServeHealth)))
 	mux.HandleFunc("/api/myip", app.ServeMyIP)
@@ -416,14 +452,18 @@ func (app *App) buildRouter() http.Handler {
 	adminMux.HandleFunc("/api/admin/service/reorder", app.apiAdminReorderServices)
 	adminMux.HandleFunc("/api/admin/service", app.handleServiceCRUD)
 
-	adminHandler := app.rateLimitMiddleware(app.adminAuthMiddleware(adminMux))
+	adminHandler := app.adminOriginMiddleware(app.rateLimitMiddleware(adminMux))
 	mux.Handle("/admin", adminHandler)
+	mux.Handle("/admin/{$}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusMovedPermanently)
+	}))
 	mux.Handle("/api/admin/", adminHandler)
 
 	var handler http.Handler = mux
 	handler = app.maxBytesMiddleware(handler)
 	handler = app.contentTypeMiddleware(handler)
 	handler = app.corsMiddleware(handler)
+	handler = app.securityHeadersMiddleware(handler)
 
 	return handler
 }
@@ -461,19 +501,31 @@ func jsonMarshalBytes(s string) ([]byte, error) {
 	return json.Marshal(s)
 }
 
-// StartConfigWatcher watches config file changes
+// StartConfigWatcher watches the directory containing the config file, so
+// nested paths (e.g. data/config.json) are handled correctly. Watching the
+// directory also survives atomic rename-based saves.
 func (app *App) StartConfigWatcher() {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		slog.Error("Error creating watcher", "error", err)
 		return
 	}
-	if err := w.Add("."); err != nil {
-		slog.Error("Error adding to watcher", "file", app.ConfigFile, "error", err)
+
+	configAbs, err := filepath.Abs(app.ConfigFile)
+	if err != nil {
+		slog.Error("Error resolving config path", "file", app.ConfigFile, "error", err)
 		w.Close()
 		return
 	}
-	slog.Info("Watching config file", "file", app.ConfigFile)
+	configAbs = filepath.Clean(configAbs)
+	configDir := filepath.Dir(configAbs)
+
+	if err := w.Add(configDir); err != nil {
+		slog.Error("Error adding to watcher", "dir", configDir, "error", err)
+		w.Close()
+		return
+	}
+	slog.Info("Watching config file", "file", configAbs)
 
 	app.Watcher = w
 	triggerCh := make(chan struct{}, 1)
@@ -499,11 +551,14 @@ func (app *App) StartConfigWatcher() {
 					return
 				}
 				if !debounceTimer.Stop() {
-					<-debounceTimer.C
+					select {
+					case <-debounceTimer.C:
+					default:
+					}
 				}
 				debounceTimer.Reset(500 * time.Millisecond)
 			case <-debounceTimer.C:
-				slog.Info("Config.json change detected, reloading...")
+				slog.Info("Config change detected, reloading...")
 				app.reloadConfig()
 				select {
 				case <-triggerCh:
@@ -522,10 +577,11 @@ func (app *App) StartConfigWatcher() {
 				if !ok {
 					return
 				}
-				if e.Name == app.ConfigFile+".tmp" {
+				eventAbs, err := filepath.Abs(e.Name)
+				if err != nil || filepath.Clean(eventAbs) != configAbs {
 					continue
 				}
-				if e.Name == app.ConfigFile && (e.Op&fsnotify.Write != 0 || e.Op&fsnotify.Create != 0 || e.Op&fsnotify.Rename != 0) {
+				if e.Op&fsnotify.Write != 0 || e.Op&fsnotify.Create != 0 || e.Op&fsnotify.Rename != 0 {
 					select {
 					case triggerCh <- struct{}{}:
 					default:
@@ -541,23 +597,21 @@ func (app *App) StartConfigWatcher() {
 	}()
 }
 
-// reloadConfig reloads and validates the config file
+// reloadConfig reloads and validates the config file. Invalid configs are
+// ignored and the current in-memory groups remain active.
 func (app *App) reloadConfig() {
 	app.reloadMu.Lock()
 	defer app.reloadMu.Unlock()
 	cfg, err := loadConfig(app.ConfigFile)
 	if err != nil {
-		slog.Error("Error reloading config", "error", err)
+		slog.Error("Error reloading config, keeping current config", "error", err)
 		return
 	}
 	g := cfg.groups
 
 	if err := app.ValidateGroups(g); err != nil {
-		slog.Warn("Validation warning", "error", err)
-	}
-
-	if cfg.admin != nil {
-		app.RequireAdminAuth.Store(app.AdminAPIKey != "" && cfg.admin.RequireAPIKey)
+		slog.Error("Config validation failed, keeping current config", "error", err)
+		return
 	}
 
 	app.iconResolver.ClearCache()
@@ -589,13 +643,13 @@ func (app *App) rateLimitMiddleware(next http.Handler) http.Handler {
 // rateLimiter implements a simple token bucket rate limiter
 type rateLimiter struct {
 	mu         sync.Mutex
-	tokens     int64
-	maxTokens  int64
-	refillRate int64
+	tokens     float64
+	maxTokens  float64
+	refillRate float64
 	lastRefill time.Time
 }
 
-func newRateLimiter(maxTokens, refillRate int64) *rateLimiter {
+func newRateLimiter(maxTokens, refillRate float64) *rateLimiter {
 	return &rateLimiter{
 		tokens:     maxTokens,
 		maxTokens:  maxTokens,
@@ -609,13 +663,13 @@ func (rl *rateLimiter) Allow() bool {
 	defer rl.mu.Unlock()
 	now := time.Now()
 	elapsed := now.Sub(rl.lastRefill).Seconds()
-	rl.tokens += int64(float64(rl.refillRate) * elapsed)
+	rl.tokens += rl.refillRate * elapsed
 	if rl.tokens > rl.maxTokens {
 		rl.tokens = rl.maxTokens
 	}
 	rl.lastRefill = now
 
-	if rl.tokens <= 0 {
+	if rl.tokens < 1 {
 		return false
 	}
 	rl.tokens--

@@ -24,19 +24,16 @@ func (app *App) ServeHome(w http.ResponseWriter, _ *http.Request) {
 }
 
 // ServeStatus — handler for status API
-func (app *App) ServeStatus(w http.ResponseWriter, r *http.Request) {
-	groups := app.GetGroupsCopy()
+func (app *App) ServeStatus(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(func() map[string]any {
-		var _ []Group = groups
-		return app.getCachedStatuses()
-	}()); err != nil {
+	if err := json.NewEncoder(w).Encode(app.getCachedStatuses()); err != nil {
 		slog.Debug("Failed to encode status response", "error", err)
 	}
 }
 
-// ServeHealth — handler for health check
-func (app *App) ServeHealth(w http.ResponseWriter, r *http.Request) {
+// ServeHealth — handler for health check. Returns 503 when the config cannot
+// be loaded, so container orchestrators can detect a broken deployment.
+func (app *App) ServeHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	configOK := true
@@ -46,10 +43,13 @@ func (app *App) ServeHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := "ok"
+	statusCode := http.StatusOK
 	if !configOK {
 		status = "degraded"
+		statusCode = http.StatusServiceUnavailable
 	}
 
+	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"status":        status,
 		"config_ok":     configOK,
@@ -141,14 +141,18 @@ func (app *App) fetchPublicIP(ctx context.Context) (ip, ipType, provider string)
 		}
 
 		ip = strings.TrimSpace(string(body))
-		if net.ParseIP(ip) == nil {
+		parsed := net.ParseIP(ip)
+		if parsed == nil || !isPublicIP(parsed) {
+			slog.Debug("IP provider returned a non-public address, skipping",
+				"provider", providerURL, "value", ip)
+			ip = ""
 			continue
 		}
 
-		if strings.Contains(ip, ":") {
-			ipType = "ipv6"
-		} else {
+		if parsed.To4() != nil {
 			ipType = "ipv4"
+		} else {
+			ipType = "ipv6"
 		}
 
 		if u, err := url.Parse(providerURL); err == nil {
@@ -164,10 +168,79 @@ func (app *App) fetchPublicIP(ctx context.Context) (ip, ipType, provider string)
 	return "", "", ""
 }
 
-// corsMiddleware — middleware for CORS
+// isPublicIP reports whether the address is a globally routable unicast address.
+// It rejects loopback, link-local, private (RFC1918), CGNAT (100.64/10),
+// IPv6 ULA (fc00::/7) and IPv6 link-local/loopback addresses, so a broken or
+// misbehaving provider cannot make the UI show a LAN address as the WAN IP.
+func isPublicIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() ||
+		ip.IsPrivate() { // RFC1918 + IPv6 ULA (fc00::/7)
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		// CGNAT 100.64.0.0/10 — not routable on the public Internet.
+		if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+			return false
+		}
+		// Benchmark 198.18.0.0/15 and documentation/test ranges.
+		if v4[0] == 198 && (v4[1] == 18 || v4[1] == 19 ||
+			(v4[1] == 51 && v4[2] == 100)) {
+			return false
+		}
+		if v4[0] == 192 && v4[1] == 0 && (v4[2] == 0 || v4[2] == 2) {
+			return false
+		}
+		if v4[0] == 203 && v4[1] == 0 && v4[2] == 113 {
+			return false
+		}
+	}
+	return true
+}
+
+// isAdminPath reports whether the path belongs to the admin UI/API.
+func isAdminPath(path string) bool {
+	return path == "/admin" || strings.HasPrefix(path, "/admin/") ||
+		path == "/api/admin" || strings.HasPrefix(path, "/api/admin/")
+}
+
+// sameOrigin reports whether the Origin header matches the request host.
+func sameOrigin(origin, host string) bool {
+	if origin == "" || origin == "null" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
+}
+
+// corsMiddleware — CORS for public endpoints and strict same-origin handling
+// for the admin UI/API (which is intentionally available without authentication).
 func (app *App) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+
+		if isAdminPath(r.URL.Path) {
+			if origin != "" {
+				if !sameOrigin(origin, r.Host) {
+					http.Error(w, "Cross-origin admin requests are not allowed", http.StatusForbidden)
+					return
+				}
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		if app.AllowedOrigins == "" {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -185,11 +258,34 @@ func (app *App) corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-		if r.Method == "OPTIONS" {
+		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
+		next.ServeHTTP(w, r)
+	})
+}
+
+// adminOriginMiddleware rejects cross-origin admin requests as defence in depth.
+func (app *App) adminOriginMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r.Host) {
+			http.Error(w, "Cross-origin admin requests are not allowed", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// securityHeadersMiddleware adds basic hardening headers.
+func (app *App) securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if isAdminPath(r.URL.Path) {
+			w.Header().Set("X-Frame-Options", "DENY")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -247,10 +343,6 @@ func (app *App) ResolveIcon(name, explicitIcon string) string {
 
 func (app *App) ResolveColor(name string) string {
 	return app.iconResolver.ResolveColor(name)
-}
-
-func (app *App) ResolveIconColor(name string) string {
-	return app.iconResolver.ResolveIconColor(name)
 }
 
 func (app *App) ResolveIconCDN(name, explicitIcon string) string {

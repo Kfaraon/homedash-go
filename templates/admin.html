@@ -120,13 +120,17 @@
             </div>
             <div class="form-group">
                 <label for="modalServiceURL">URL (опционально)</label>
-                <input type="text" id="modalServiceURL" placeholder="https://example.com" oninput="this.value = this.value.toLowerCase()">
+                <input type="text" id="modalServiceURL" placeholder="https://example.com">
                 <div class="field-error" id="modalServiceURLError"></div>
             </div>
             <div class="form-group">
                 <label for="modalServiceIP">IP (опционально)</label>
                 <input type="text" id="modalServiceIP" placeholder="192.168.1.1">
                 <div class="field-error" id="modalServiceIPError"></div>
+            </div>
+            <div class="form-group">
+                <label for="modalServiceIcon">Иконка (опционально)</label>
+                <input type="text" id="modalServiceIcon" placeholder="simple-icons:plex">
             </div>
             <div class="form-group checkbox-group">
                 <input type="checkbox" id="modalServiceSSL">
@@ -445,6 +449,7 @@
             document.getElementById('modalServiceName').value = '';
             document.getElementById('modalServiceURL').value = '';
             document.getElementById('modalServiceIP').value = '';
+            document.getElementById('modalServiceIcon').value = '';
             document.getElementById('modalServiceSSL').checked = false;
             clearAllServiceErrors();
             document.getElementById('serviceModal').classList.add('active');
@@ -471,6 +476,7 @@
             document.getElementById('modalServiceName').value = service.name || '';
             document.getElementById('modalServiceURL').value = service.url || '';
             document.getElementById('modalServiceIP').value = service.ip || '';
+            document.getElementById('modalServiceIcon').value = service.icon || '';
             document.getElementById('modalServiceSSL').checked = service.verify_ssl || false;
             clearAllServiceErrors();
             document.getElementById('serviceModal').classList.add('active');
@@ -482,8 +488,9 @@
             const oldName = document.getElementById('modalOldName').value;
             const service = {
                 name: document.getElementById('modalServiceName').value.trim(),
-                url: document.getElementById('modalServiceURL').value.trim().toLowerCase(),
+                url: document.getElementById('modalServiceURL').value.trim(),
                 ip: document.getElementById('modalServiceIP').value.trim(),
+                icon: document.getElementById('modalServiceIcon').value.trim(),
                 verify_ssl: document.getElementById('modalServiceSSL').checked
             };
 

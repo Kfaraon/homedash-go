@@ -47,6 +47,7 @@
                         <div class="icon-bubble" style="background-color: {{resolveColor .Name}};">
                             <img class="service-icon-img"
                                  src="{{resolveIconCDN .Name .Icon}}"
+                                 data-icon-candidates="{{range $i, $u := iconCandidates .Name .Icon}}{{if $i}} {{end}}{{$u}}{{end}}"
                                  alt=""
                                  loading="lazy"
                                  decoding="async"
@@ -82,7 +83,10 @@
 
         <!-- ====== Footer ====== -->
         <footer class="footer">
-            <span id="wan-ip" class="wan-ip" title="Ваш внешний IP-адрес">wan адрес: загрузка...</span>
+            <span class="wan-wrap">
+                <span id="wan-dot" class="wan-dot" aria-hidden="true"></span>
+                <span id="wan-ip" class="wan-ip" title="Ваш внешний IP-адрес">wan адрес: загрузка...</span>
+            </span>
         </footer>
 
     </div>
@@ -135,7 +139,8 @@
                 const data = await res.json();
 
                 Object.entries(data.services).forEach(([name, st]) => {
-                    const card = document.querySelector(`.service-card[data-service-name="${name}"]`);
+                    const card = [...document.querySelectorAll('.service-card')]
+                        .find(el => el.dataset.serviceName === name);
                     if (!card) return;
                     card.querySelectorAll('.status-icons > span').forEach(span => {
                         const type = span.dataset.checkType;
@@ -171,16 +176,20 @@
 
         /* ── WAN IP ── */
         async function fetchWanIp() {
+            const dot = document.getElementById('wan-dot');
             try {
                 const res = await fetch('/api/myip', { signal: AbortSignal.timeout(5000) });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const ip = await res.text();
+                const ip = (await res.text()).trim();
+                if (!ip) throw new Error('empty');
                 const el = document.getElementById('wan-ip');
-                if (el) el.textContent = `wan адрес: ${ip.trim()}`;
+                if (el) el.textContent = `wan адрес: ${ip}`;
+                if (dot) dot.classList.add('up');
             } catch (err) {
                 console.warn('[homedash] wan ip fetch error:', err);
                 const el = document.getElementById('wan-ip');
                 if (el) el.textContent = 'wan адрес: недоступен';
+                if (dot) dot.classList.remove('up');
             }
         }
         fetchWanIp();
@@ -212,24 +221,29 @@
                 }
             }
 
-            // Если src пустой или уже data:image — сразу заглушка
-            const originalSrc = img.getAttribute('src');
-            if (!originalSrc || originalSrc.startsWith('data:')) {
+            // Список кандидатов: основной src + запасные из iconify (если сервис
+            // не найден в каталоге иконок). Пробуем по очереди, затем заглушка.
+            const candidatesAttr = img.getAttribute('data-icon-candidates') || '';
+            let candidates = candidatesAttr.split(/\s+/).filter(Boolean);
+            if (candidates.length === 0) {
+                const originalSrc = img.getAttribute('src');
+                if (originalSrc) candidates = [originalSrc];
+            }
+            // data:URL заглушки не нуждается в сетевой загрузке — сразу рисуем букву.
+            if (candidates.length > 0 && candidates[0].startsWith('data:')) {
                 img.src = generateFallbackSVG(serviceName, bgColor);
                 return;
             }
 
-            let retry = false;
+            let idx = 0;
             img.onerror = () => {
-                if (retry) {
-                    // Вторая ошибка — окончательная заглушка
-                    img.src = generateFallbackSVG(serviceName, bgColor);
-                } else {
-                    retry = true;
-                    // Первая ошибка: пробуем перезагрузить с cache-buster
-                    const separator = originalSrc.includes('?') ? '&' : '?';
-                    img.src = originalSrc + separator + '_cb=' + Date.now();
+                idx += 1;
+                if (idx < candidates.length) {
+                    img.src = candidates[idx];
+                    return;
                 }
+                // Все кандидаты недоступны — буквенная заглушка.
+                img.src = generateFallbackSVG(serviceName, bgColor);
             };
         }
 
